@@ -1,0 +1,891 @@
+#!/usr/bin/env python3
+"""
+L2DropSpoilGen — Drop/Spoil on-hover target icons for Lineage 2 HighFive clients.
+
+Point it to an L2J Mobius datapack (data/stats/npcs) and to your client's System
+folder, and it generates the 3 patched client files:
+
+    npcgrp.dat          - adds [skill_id, level] pairs to each monster's property_list
+    SkillGrp.dat        - one entry per custom skill (defines the icon)
+    SkillName-<lang>.dat- one entry per custom skill (tooltip text goes in the NAME field)
+
+Result in game: targeting a monster shows a Drop icon (adena coin) and/or a Spoil
+icon in the target window; hovering them shows that monster's full drop/spoil list.
+100% client-side — the server is never touched.
+
+Run without arguments for the GUI, or with --npcs/--system for CLI mode.
+
+Client requirements: HighFive client, .dat crypto "Lineage2Ver413".
+Datapack requirements: L2J Mobius-style NPC XMLs (<dropLists><drop>/<spoil>).
+Item names are taken from the XML comments next to each <item> (Mobius has them).
+"""
+
+import os
+import re
+import sys
+import json
+import glob
+import struct
+import shutil
+import tempfile
+import subprocess
+import argparse
+
+APP = "L2DropSpoilGen"
+VERSION = "1.1"
+
+# Skill ids >= STRIP_FLOOR that use our icons are treated as leftovers from a
+# previous run of this tool and are removed before regenerating (idempotent
+# re-runs on already-patched files). Retail HF's highest skill id is 26073.
+STRIP_FLOOR = 27000
+
+DEFAULTS = dict(
+    base_id=30001,
+    max_chars=1500,
+    max_line=0,          # 0 = unlimited; else truncate long item names
+    max_items=0,         # 0 = unlimited; else cap items per list
+    min_chance=0.0,      # 0 = keep all; else hide items below this chance (%)
+    chance_decimals=4,
+    drop_icon="icon.etc_adena_i00",
+    spoil_icon="icon.skill0254",
+    title_drop="Drop",
+    title_spoil="Spoil",
+    header_char="=",
+    header_factor=1.0,   # scale of the header width vs the widest item line
+    trunc_suffix="...(more)",
+    template_skill="4460",
+)
+
+# Approximate glyph widths of the client tooltip font (proportional), in units
+# of the '=' glyph. Used to size the header in PIXELS instead of characters —
+# item lines are full of narrow chars (spaces, i, l, dots) so a char-count
+# header renders much wider than the list.
+_CHAR_W = {
+    " ": 0.48, ".": 0.48, ",": 0.48, ":": 0.48, ";": 0.48, "!": 0.48,
+    "'": 0.33, "(": 0.57, ")": 0.57, "[": 0.57, "]": 0.57, "-": 0.57,
+    "/": 0.48, "%": 1.52, "+": 1.0, "=": 1.0, "*": 0.67, "_": 0.95,
+    "i": 0.38, "j": 0.38, "l": 0.38, "t": 0.5, "f": 0.5, "r": 0.57,
+    "m": 1.43, "w": 1.24, "I": 0.48, "J": 0.86, "M": 1.43, "W": 1.62,
+}
+
+
+def disp_width(s):
+    """Estimated rendered width of s, in '=' glyph units."""
+    return sum(_CHAR_W.get(c, 0.95 if not c.isupper() else 1.15) for c in s)
+
+
+class ToolError(Exception):
+    pass
+
+
+# ---------------------------------------------------------------- toolchain
+
+def tools_dir():
+    base = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
+    d = os.path.join(base, "tools")
+    for f in ("l2encdec_old.exe", "l2asm.exe", "l2disasm.exe",
+              os.path.join("ddf", "skillgrp.ddf"), os.path.join("ddf", "skillname-e.ddf")):
+        if not os.path.isfile(os.path.join(d, f)):
+            raise ToolError("Missing bundled tool: tools/%s" % f)
+    return d
+
+
+def run_tool(workdir, exe, args, expect_out=None):
+    """Run a bundled tool with cwd=workdir. All file args must be relative
+    names inside workdir (the old tools choke on paths with spaces)."""
+    flags = 0x08000000 if sys.platform == "win32" else 0  # CREATE_NO_WINDOW
+    p = subprocess.run([exe] + args, cwd=workdir, capture_output=True,
+                       creationflags=flags)
+    out = (p.stdout or b"").decode("utf-8", "replace") + (p.stderr or b"").decode("utf-8", "replace")
+    ok = p.returncode == 0
+    if ok and expect_out is not None:
+        f = os.path.join(workdir, expect_out)
+        ok = os.path.isfile(f) and os.path.getsize(f) > 0
+    if not ok:
+        tail = "\n".join(out.strip().splitlines()[-8:])
+        raise ToolError("%s %s failed (exit %d):\n%s"
+                        % (os.path.basename(exe), " ".join(args), p.returncode, tail))
+    return out
+
+
+class Toolchain:
+    def __init__(self, workdir):
+        self.td = tools_dir()
+        self.wd = workdir
+        # ddf paths are passed to l2asm/l2disasm as arguments -> copy them into
+        # the (space-free) workdir and reference them relatively.
+        os.makedirs(os.path.join(workdir, "ddf"), exist_ok=True)
+        for f in ("skillgrp.ddf", "skillname-e.ddf"):
+            shutil.copy2(os.path.join(self.td, "ddf", f), os.path.join(workdir, "ddf", f))
+
+    def decrypt(self, dat_rel, dec_rel):
+        run_tool(self.wd, os.path.join(self.td, "l2encdec_old.exe"),
+                 ["-s", dat_rel, dec_rel], expect_out=dec_rel)
+
+    def encrypt(self, dec_rel, dat_rel):
+        run_tool(self.wd, os.path.join(self.td, "l2encdec_old.exe"),
+                 ["-h", "413", dec_rel, dat_rel], expect_out=dat_rel)
+
+    def disasm(self, ddf, dec_rel, txt_rel):
+        run_tool(self.wd, os.path.join(self.td, "l2disasm.exe"),
+                 ["-d", "ddf/" + ddf, dec_rel, txt_rel], expect_out=txt_rel)
+
+    def asm(self, ddf, txt_rel, dec_rel):
+        run_tool(self.wd, os.path.join(self.td, "l2asm.exe"),
+                 ["-d", "ddf/" + ddf, txt_rel, dec_rel], expect_out=dec_rel)
+
+
+# ---------------------------------------------------------------- datapack extraction
+
+ITEM_RE = re.compile(r'<item id="(\d+)"\s+min="(\d+)"\s+max="(\d+)"\s+chance="([\d.]+)"'
+                     r'\s*[\\/]*>\s*(?:<!--\s*(.*?)\s*-->)?')
+NPC_RE = re.compile(r'<npc id="(\d+)"[^>]*>(.*?)</npc>', re.S)
+GROUP_RE = re.compile(r'<group chance="([\d.]+)"\s*>(.*?)</group>', re.S)
+
+
+def resolve_npcs_dir(path):
+    """Accept either the npcs dir itself or a datapack root."""
+    for cand in (path, os.path.join(path, "data", "stats", "npcs"),
+                 os.path.join(path, "game", "data", "stats", "npcs"),
+                 os.path.join(path, "dist", "game", "data", "stats", "npcs")):
+        if os.path.isdir(cand) and glob.glob(os.path.join(cand, "*.xml")):
+            return cand
+    raise ToolError("No NPC XMLs found under: %s\n"
+                    "Point --npcs to the datapack's data/stats/npcs folder." % path)
+
+
+def _items_of(block):
+    out = []
+    for it in ITEM_RE.finditer(block):
+        name = it.group(5) or ("item#" + it.group(1))
+        out.append((name, int(it.group(2)), int(it.group(3)), float(it.group(4))))
+    return out
+
+
+def extract_npcs(npcs_dir, log):
+    """-> {npc_id: {"drop": [(name, min, max, chance%), ...], "spoil": [...]}}"""
+    res = {}
+    files = glob.glob(os.path.join(npcs_dir, "*.xml"))
+    for f in files:
+        data = open(f, encoding="utf-8", errors="replace").read()
+        for m in NPC_RE.finditer(data):
+            block = m.group(2)
+            dl = re.search(r'<dropLists>(.*?)</dropLists>', block, re.S)
+            if not dl:
+                continue
+            dl = dl.group(1)
+            drop, spoil = [], []
+            dm = re.search(r'<drop>(.*?)</drop>', dl, re.S)
+            if dm:
+                inner = dm.group(1)
+                # items inside <group chance=..>: effective chance = group * item / 100
+                for g in GROUP_RE.finditer(inner):
+                    gc = float(g.group(1))
+                    for name, mn, mx, ch in _items_of(g.group(2)):
+                        drop.append((name, mn, mx, gc * ch / 100.0))
+                # loose items directly in <drop> (no group): chance as-is
+                for item in _items_of(re.sub(r'<group.*?</group>', '', inner, flags=re.S)):
+                    drop.append(item)
+            sm = re.search(r'<spoil>(.*?)</spoil>', dl, re.S)
+            if sm:
+                spoil = _items_of(sm.group(1))
+            if drop or spoil:
+                res[int(m.group(1))] = {"drop": drop, "spoil": spoil}
+    nd = sum(1 for v in res.values() if v["drop"])
+    ns = sum(1 for v in res.values() if v["spoil"])
+    log("Datapack: %d XML files, %d NPCs with lists (%d drop, %d spoil)"
+        % (len(files), len(res), nd, ns))
+    if not res:
+        raise ToolError("No <dropLists> found — is this an L2J Mobius datapack?")
+    return res
+
+
+# ---------------------------------------------------------------- text generation
+
+def fmt_chance(x, decimals):
+    return ("%.*f" % (decimals, x)).rstrip("0").rstrip(".")
+
+
+def format_item(name, mn, mx, ch, o):
+    amt = "" if (mn == mx == 1) else (" %d" % mn if mn == mx else " %d-%d" % (mn, mx))
+    tail = "%s (%s%%)" % (amt, fmt_chance(ch, o["chance_decimals"]))
+    line = name + tail
+    if o["max_line"] and len(line) > o["max_line"]:
+        keep = max(o["max_line"] - len(tail) - 3, 8)
+        line = name[:keep] + "..." + tail
+    return line
+
+
+def make_lines(items, o):
+    if o["min_chance"]:
+        items = [it for it in items if it[3] >= o["min_chance"]]
+    hidden = 0
+    if o["max_items"] and len(items) > o["max_items"]:
+        hidden = len(items) - o["max_items"]
+        items = items[:o["max_items"]]
+    lines = [format_item(*it, o) for it in items]
+    if hidden:
+        lines.append("+%d more..." % hidden)
+    return lines
+
+
+def make_body(lines, title, o):
+    target = max(disp_width(r) for r in lines) * o["header_factor"]
+    t = " %s " % title
+    pad = max(int(round(target - disp_width(t))), 4)
+    header = o["header_char"] * (pad // 2) + t + o["header_char"] * (pad - pad // 2)
+    body = header + "\\n" + "\\n".join(lines)
+    if len(body) > o["max_chars"]:
+        body = body[:o["max_chars"]].rsplit("\\n", 1)[0] + "\\n" + o["trunc_suffix"]
+    return body
+
+
+# ---------------------------------------------------------------- SkillGrp / SkillName rows
+
+def load_rows(path):
+    txt = open(path, encoding="utf-8", errors="replace").read()
+    if "�" in txt:
+        raise ToolError("Non-UTF8 bytes in %s — unexpected disasm output" % os.path.basename(path))
+    return [l for l in txt.split("\n") if l.strip() != ""]
+
+
+def save_rows(path, rows):
+    open(path, "w", encoding="utf-8", newline="").write("\n".join(rows) + "\n")
+
+
+def row_id(row):
+    f = row.split("\t", 1)
+    try:
+        return int(f[0])
+    except ValueError:
+        return None
+
+
+def clean_skillgrp(rows, o, log):
+    """Remove rows generated by a previous run (id>=STRIP_FLOOR with our icons).
+    -> (kept_rows, strip_ids)"""
+    kept, strip_ids = [], set()
+    for r in rows:
+        i = row_id(r)
+        if i is not None and i >= STRIP_FLOOR:
+            f = r.split("\t")
+            if o["drop_icon"] in f or o["spoil_icon"] in f:
+                strip_ids.add(i)
+                continue
+        kept.append(r)
+    if strip_ids:
+        log("SkillGrp: removed %d entries from a previous run (ids %d..%d)"
+            % (len(strip_ids), min(strip_ids), max(strip_ids)))
+    return kept, strip_ids
+
+
+def find_template(rows, o):
+    tmpl = None
+    for r in rows:
+        f = r.split("\t")
+        if len(f) >= 2 and f[0] == o["template_skill"] and f[1] == "1":
+            tmpl = f
+            break
+    if tmpl is None:  # fallback: any real skill row with an icon
+        for r in rows:
+            f = r.split("\t")
+            if row_id(r) is not None and any(c.startswith("icon.skill") for c in f):
+                tmpl = f
+                break
+    if tmpl is None:
+        raise ToolError("Could not find a template row in SkillGrp — unexpected format")
+    for idx, c in enumerate(tmpl):
+        if c.startswith("icon."):
+            return tmpl, idx
+    raise ToolError("Template SkillGrp row has no icon column")
+
+
+def generate(drops, sg_rows, o, log):
+    """-> (new_sg_rows, new_sn_rows, skmap {npc_id: [sid, lvl, ...]})"""
+    tmpl, icon_col = find_template(sg_rows, o)
+    existing = set(i for i in (row_id(r) for r in sg_rows) if i is not None and i >= o["base_id"])
+
+    new_sg, new_sn, skmap = [], [], {}
+    nid = o["base_id"]
+    for npc in sorted(drops):
+        pairs = []
+        for kind, icon, title in (("drop", o["drop_icon"], o["title_drop"]),
+                                  ("spoil", o["spoil_icon"], o["title_spoil"])):
+            lines = make_lines(drops[npc][kind], o)
+            if not lines:
+                continue
+            sid = nid
+            nid += 1
+            g = tmpl[:]
+            g[0] = str(sid)
+            g[icon_col] = icon
+            new_sg.append("\t".join(g))
+            # Everything goes in the NAME field: it has no width cap, unlike
+            # description (which hard-wraps). Empty description avoids "none".
+            body = make_body(lines, title, o)
+            new_sn.append("%d\t1\ta,%s\\0\ta,\ta,none\\0\ta,none\\0" % (sid, body))
+            pairs += [sid, 1]
+        if pairs:
+            skmap[npc] = pairs
+
+    used = set(range(o["base_id"], nid))
+    clash = existing & used
+    if clash:
+        raise ToolError("SkillGrp already has %d foreign entries in id range %d..%d "
+                        "(e.g. %d). Use a different --base-id or clean client files."
+                        % (len(clash), o["base_id"], nid - 1, min(clash)))
+    log("Generated %d custom skills (ids %d..%d) for %d NPCs"
+        % (nid - o["base_id"], o["base_id"], nid - 1, len(skmap)))
+    return new_sg, new_sn, skmap
+
+
+def clean_skillname(rows, strip_ids, planned, log, fname):
+    kept, removed = [], 0
+    for r in rows:
+        i = row_id(r)
+        if i is not None and i in strip_ids:
+            removed += 1
+            continue
+        kept.append(r)
+    if removed:
+        log("%s: removed %d entries from a previous run" % (fname, removed))
+    clash = set(i for i in (row_id(r) for r in kept) if i in planned)
+    if clash:
+        raise ToolError("%s already has %d foreign entries in the target id range "
+                        "(e.g. %d). Use a different --base-id or clean client files."
+                        % (fname, len(clash), min(clash)))
+    return kept
+
+
+# ---------------------------------------------------------------- npcgrp.dat (own parser)
+
+class NpcGrp:
+    """HighFive npcgrp.dec walker. Strings are [u32 byte-len][UTF-16LE] (not
+    null-terminated), CNTR is an Unreal compact index. The trailing footer
+    (~13 bytes after the last record) MUST be preserved or the client reports
+    'File was corrupted'."""
+
+    def __init__(self, data):
+        self.data = data
+
+    def rebuild(self, strip_ids, add_map, force_rewrite=False):
+        """-> (bytes, npcs_patched, pairs_stripped). Rewrites each record's
+        property_list, dropping [id, lvl] pairs whose id is in strip_ids and
+        appending add_map[npc_id] pairs."""
+        data = self.data
+        pos = [0]
+
+        def u32():
+            v = struct.unpack_from("<I", data, pos[0])[0]
+            pos[0] += 4
+            return v
+
+        def f32():
+            pos[0] += 4
+
+        def uni():
+            n = struct.unpack_from("<I", data, pos[0])[0]
+            pos[0] += 4 + n
+
+        def cntr_read():
+            b0 = data[pos[0]]
+            pos[0] += 1
+            val = b0 & 0x3F
+            sh = 6
+            if b0 & 0x80:
+                while True:
+                    bx = data[pos[0]]
+                    pos[0] += 1
+                    val |= (bx & 0x7F) << sh
+                    sh += 7
+                    if not (bx & 0x80):
+                        break
+            return val
+
+        def cntr_encode(v):
+            out = bytearray()
+            b0 = v & 0x3F
+            v >>= 6
+            if v:
+                b0 |= 0x80
+            out.append(b0)
+            while v:
+                b = v & 0x7F
+                v >>= 7
+                if v:
+                    b |= 0x80
+                out.append(b)
+            return bytes(out)
+
+        count = u32()
+        out = bytearray(struct.pack("<I", count))
+        patched = stripped = 0
+        odd_props = 0
+        for _ in range(count):
+            rec_start = pos[0]
+            npc_id = u32()
+            uni(); uni()                                   # class, mesh
+            for _ in range(u32()): uni()                   # tex1[]
+            for _ in range(u32()): uni()                   # tex2[]
+            prop_off = pos[0]
+            pcount = cntr_read()
+            arr = [u32() for _ in range(pcount)]
+            prop_end = pos[0]
+            f32()                                          # speed
+            for _ in range(u32()): uni()                   # sounds 1
+            for _ in range(u32()): uni()                   # sounds 2
+            for _ in range(u32()): uni()                   # sounds 3
+            for _ in range(u32()): uni()                   # sounds 4
+            for _ in range(u32()): (uni(), f32())          # (string, float) pairs
+            for _ in range(cntr_read()): u32()
+            for _ in range(cntr_read()): u32()
+            uni()                                          # attack_effect
+            u32(); f32(); f32(); f32()
+            u32(); u32()
+            for _ in range(u32()):                         # null-terminated cstrings
+                while data[pos[0]] != 0:
+                    pos[0] += 1
+                pos[0] += 1
+            u32()
+            rec_end = pos[0]
+
+            # Retail lists are [skill_id, level] pairs, EXCEPT a lone [0] used as
+            # an "empty" sentinel (1299 retail records). Legacy runs of this tool
+            # appended pairs after that 0 ([0, sid, 1]) — understand both shapes.
+            if len(arr) % 2 == 0:
+                head, pairs = [], arr
+            elif arr and arr[0] == 0:
+                head, pairs = [0], arr[1:]
+            else:
+                head, pairs = None, None
+
+            new_arr = arr
+            add = add_map.get(npc_id)
+            if head is None:
+                if add or (strip_ids and any(x in strip_ids for x in arr)):
+                    odd_props += 1
+            else:
+                changed = False
+                if strip_ids and pairs:
+                    kept = []
+                    for i in range(0, len(pairs), 2):
+                        if pairs[i] in strip_ids:
+                            stripped += 1
+                            changed = True
+                        else:
+                            kept += [pairs[i], pairs[i + 1]]
+                    pairs = kept
+                if add:
+                    pairs = pairs + add
+                    patched += 1
+                    changed = True
+                if changed:
+                    # when real pairs exist the [0] sentinel is dropped — retail
+                    # never mixes it with pairs; restore it if the list empties.
+                    new_arr = pairs if pairs else head
+            if force_rewrite or new_arr != arr:
+                out += data[rec_start:prop_off]
+                out += cntr_encode(len(new_arr))
+                out += b"".join(struct.pack("<I", x) for x in new_arr)
+                out += data[prop_end:rec_end]
+            else:
+                out += data[rec_start:rec_end]
+        out += data[pos[0]:]                               # preserve footer/tail
+        if odd_props:
+            raise ToolError("npcgrp: %d records need patching but have an "
+                            "unrecognized property_list shape" % odd_props)
+        return bytes(out), patched, stripped
+
+    def selfcheck(self):
+        """Full parse + active rewrite of every property_list with no changes
+        must reproduce the input byte-for-byte."""
+        try:
+            out, _, _ = self.rebuild(set(), {}, force_rewrite=True)
+        except (struct.error, IndexError) as e:
+            raise ToolError("npcgrp structure walk failed (%s) — this does not "
+                            "look like a HighFive npcgrp.dat" % e)
+        if out != self.data:
+            raise ToolError("npcgrp round-trip self-check failed — this does not "
+                            "look like a HighFive npcgrp.dat")
+
+
+# ---------------------------------------------------------------- pipeline
+
+def find_file_ci(d, name):
+    for f in os.listdir(d):
+        if f.lower() == name.lower():
+            return os.path.join(d, f)
+    return None
+
+
+def detect_langs(system_dir):
+    langs = []
+    for f in sorted(os.listdir(system_dir)):
+        m = re.match(r"skillname-(\w+)\.dat$", f, re.I)
+        if m:
+            langs.append(m.group(1).lower())
+    return langs
+
+
+def run_pipeline(opts, log):
+    o = dict(DEFAULTS)
+    o.update({k: v for k, v in opts.items() if v is not None})
+
+    npcs_dir = resolve_npcs_dir(o["npcs"])
+    sysdir = o["system"]
+    if not os.path.isdir(sysdir):
+        raise ToolError("System folder not found: %s" % sysdir)
+
+    ng_src = find_file_ci(sysdir, "npcgrp.dat")
+    sg_src = find_file_ci(sysdir, "skillgrp.dat")
+    if not ng_src or not sg_src:
+        raise ToolError("npcgrp.dat / SkillGrp.dat not found in %s" % sysdir)
+
+    langs = o.get("langs") or detect_langs(sysdir)
+    if not langs:
+        raise ToolError("No SkillName-<lang>.dat found in %s" % sysdir)
+    sn_srcs = {}
+    for lang in langs:
+        p = find_file_ci(sysdir, "skillname-%s.dat" % lang)
+        if not p:
+            raise ToolError("SkillName-%s.dat not found in %s" % (lang, sysdir))
+        sn_srcs[lang] = p
+    log("Input:  %s" % npcs_dir)
+    log("Client: %s  (languages: %s)" % (sysdir, ", ".join(langs)))
+
+    outdir = o["out"]
+    os.makedirs(outdir, exist_ok=True)
+
+    workdir = tempfile.mkdtemp(prefix="l2dsg_")
+    try:
+        tc = Toolchain(workdir)
+
+        # 1) decrypt + disassemble client files
+        log("Decrypting client .dat files (ver 413)...")
+        shutil.copy2(ng_src, os.path.join(workdir, "ng.dat"))
+        shutil.copy2(sg_src, os.path.join(workdir, "sg.dat"))
+        tc.decrypt("ng.dat", "ng.dec")
+        tc.decrypt("sg.dat", "sg.dec")
+        tc.disasm("skillgrp.ddf", "sg.dec", "sg.txt")
+        tc.asm("skillgrp.ddf", "sg.txt", "sg_chk.dec")
+        if open(os.path.join(workdir, "sg.dec"), "rb").read() != \
+           open(os.path.join(workdir, "sg_chk.dec"), "rb").read():
+            raise ToolError("SkillGrp round-trip self-check failed — "
+                            "client is not HighFive-compatible")
+        sn_rows = {}
+        for lang in langs:
+            shutil.copy2(sn_srcs[lang], os.path.join(workdir, "sn_%s.dat" % lang))
+            tc.decrypt("sn_%s.dat" % lang, "sn_%s.dec" % lang)
+            tc.disasm("skillname-e.ddf", "sn_%s.dec" % lang, "sn_%s.txt" % lang)
+            tc.asm("skillname-e.ddf", "sn_%s.txt" % lang, "sn_%s_chk.dec" % lang)
+            if open(os.path.join(workdir, "sn_%s.dec" % lang), "rb").read() != \
+               open(os.path.join(workdir, "sn_%s_chk.dec" % lang), "rb").read():
+                raise ToolError("SkillName-%s round-trip self-check failed" % lang)
+            sn_rows[lang] = load_rows(os.path.join(workdir, "sn_%s.txt" % lang))
+        log("Client files decrypted and verified (round-trip OK)")
+
+        # 2) extract drop/spoil from the datapack
+        drops = extract_npcs(npcs_dir, log)
+
+        # 3) generate skills (cleaning any previous run first)
+        sg_rows = load_rows(os.path.join(workdir, "sg.txt"))
+        sg_rows, strip_ids = clean_skillgrp(sg_rows, o, log)
+        new_sg, new_sn, skmap = generate(drops, sg_rows, o, log)
+        planned = set()
+        for pairs in skmap.values():
+            planned.update(pairs[0::2])
+
+        # 4) npcgrp: self-check, then strip old pairs + add new ones
+        ng = NpcGrp(open(os.path.join(workdir, "ng.dec"), "rb").read())
+        ng.selfcheck()
+        ng_out, patched, stripped = ng.rebuild(strip_ids, skmap)
+        if stripped:
+            log("npcgrp: removed %d icon pairs from a previous run" % stripped)
+        log("npcgrp: %d NPCs patched (round-trip self-check OK)" % patched)
+        open(os.path.join(workdir, "ng_out.dec"), "wb").write(ng_out)
+
+        # 5) assemble + encrypt
+        log("Assembling and encrypting output .dat files...")
+        save_rows(os.path.join(workdir, "sg_out.txt"), sg_rows + new_sg)
+        tc.asm("skillgrp.ddf", "sg_out.txt", "sg_out.dec")
+        tc.encrypt("sg_out.dec", "SkillGrp.out")
+        tc.encrypt("ng_out.dec", "npcgrp.out")
+        outputs = [("npcgrp.out", "npcgrp.dat"), ("SkillGrp.out", "SkillGrp.dat")]
+        for lang in langs:
+            rows = clean_skillname(sn_rows[lang], strip_ids, planned, log,
+                                   "SkillName-%s" % lang)
+            save_rows(os.path.join(workdir, "sn_%s_out.txt" % lang), rows + new_sn)
+            tc.asm("skillname-e.ddf", "sn_%s_out.txt" % lang, "sn_%s_out.dec" % lang)
+            tc.encrypt("sn_%s_out.dec" % lang, "SkillName-%s.out" % lang)
+            outputs.append(("SkillName-%s.out" % lang, "SkillName-%s.dat" % lang))
+
+        if o.get("dump_json"):
+            js = {str(k): {kk: [list(i) for i in vv] for kk, vv in v.items()}
+                  for k, v in drops.items()}
+            json.dump(js, open(os.path.join(outdir, "drops.json"), "w",
+                               encoding="utf-8"), ensure_ascii=False, indent=1)
+            json.dump({str(k): v for k, v in skmap.items()},
+                      open(os.path.join(outdir, "skillmap.json"), "w"), indent=1)
+
+        for src, dst in outputs:
+            shutil.copy2(os.path.join(workdir, src), os.path.join(outdir, dst))
+        log("")
+        log("DONE — files written to: %s" % os.path.abspath(outdir))
+        for _, dst in outputs:
+            log("   %s  (%d KB)" % (dst, os.path.getsize(os.path.join(outdir, dst)) // 1024))
+        log("")
+        log("BACK UP the originals in your client's System folder, then copy")
+        log("these files over them. The server needs no changes.")
+        return 0
+    finally:
+        if o.get("keep_temp"):
+            log("(temp files kept in %s)" % workdir)
+        else:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------- CLI
+
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog=APP, description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--version", action="version", version="%s %s" % (APP, VERSION))
+    p.add_argument("--npcs", help="datapack NPC folder (data/stats/npcs) or datapack root")
+    p.add_argument("--system", help="client System folder (source .dat files)")
+    p.add_argument("--out", default="output", help="output folder (default: ./output)")
+    p.add_argument("--lang", help="SkillName language(s), comma separated "
+                                  "(default: all SkillName-*.dat found)")
+    g = p.add_argument_group("format options")
+    g.add_argument("--base-id", type=int, help="first custom skill id (default 30001)")
+    g.add_argument("--max-chars", type=int, help="max tooltip length in chars (default 1500)")
+    g.add_argument("--max-line", type=int, help="max item line width, 0=off (default 0)")
+    g.add_argument("--max-items", type=int, help="max items per list, 0=off (default 0)")
+    g.add_argument("--min-chance", type=float, help="hide items below this chance %% (default 0)")
+    g.add_argument("--chance-decimals", type=int, help="chance decimals (default 4)")
+    g.add_argument("--title-drop", help='drop header title (default "Drop")')
+    g.add_argument("--title-spoil", help='spoil header title (default "Spoil")')
+    g.add_argument("--header-char", help='header padding char (default "=")')
+    g.add_argument("--header-factor", type=float,
+                   help="header width vs widest line, 1.0=equal (default 1.0)")
+    g.add_argument("--trunc-suffix", help='text appended when capped (default "...(more)")')
+    g.add_argument("--drop-icon", help="default icon.etc_adena_i00")
+    g.add_argument("--spoil-icon", help="default icon.skill0254")
+    p.add_argument("--dump-json", action="store_true", help="also write drops/skillmap json")
+    p.add_argument("--keep-temp", action="store_true", help="keep the temp work folder")
+    return p
+
+
+def cli(argv):
+    args = build_parser().parse_args(argv)
+    if not args.npcs or not args.system:
+        build_parser().error("--npcs and --system are required in CLI mode")
+    opts = dict(
+        npcs=args.npcs, system=args.system, out=args.out,
+        langs=[l.strip().lower() for l in args.lang.split(",")] if args.lang else None,
+        base_id=args.base_id, max_chars=args.max_chars, max_line=args.max_line,
+        max_items=args.max_items, min_chance=args.min_chance,
+        chance_decimals=args.chance_decimals, title_drop=args.title_drop,
+        title_spoil=args.title_spoil, header_char=args.header_char,
+        header_factor=args.header_factor,
+        trunc_suffix=args.trunc_suffix, drop_icon=args.drop_icon,
+        spoil_icon=args.spoil_icon, dump_json=args.dump_json or None,
+        keep_temp=args.keep_temp or None,
+    )
+    try:
+        return run_pipeline(opts, lambda s: print(s, flush=True))
+    except ToolError as e:
+        print("\nERROR: %s" % e, file=sys.stderr)
+        return 1
+
+
+# ---------------------------------------------------------------- GUI
+
+def gui():
+    import tkinter as tk
+    from tkinter import ttk, filedialog, messagebox, scrolledtext
+    import threading
+    import queue as _queue
+
+    root = tk.Tk()
+    root.title("%s %s — Drop/Spoil target icons (L2 HighFive)" % (APP, VERSION))
+    root.minsize(640, 560)
+
+    q = _queue.Queue()
+    lang_vars = {}
+
+    frm = ttk.Frame(root, padding=10)
+    frm.pack(fill="both", expand=True)
+
+    def pick_row(row, label, var, isdir=True, on_set=None):
+        ttk.Label(frm, text=label).grid(row=row, column=0, sticky="w", pady=2)
+        e = ttk.Entry(frm, textvariable=var, width=58)
+        e.grid(row=row, column=1, sticky="we", padx=4)
+
+        def browse():
+            d = filedialog.askdirectory() if isdir else filedialog.askopenfilename()
+            if d:
+                var.set(d)
+                if on_set:
+                    on_set()
+        ttk.Button(frm, text="...", width=3, command=browse).grid(row=row, column=2)
+
+    v_npcs = tk.StringVar()
+    v_sys = tk.StringVar()
+    v_out = tk.StringVar(value=os.path.abspath("output"))
+
+    lang_frame = ttk.Frame(frm)
+
+    def refresh_langs():
+        for w in lang_frame.winfo_children():
+            w.destroy()
+        lang_vars.clear()
+        d = v_sys.get()
+        if os.path.isdir(d):
+            for lang in detect_langs(d):
+                var = tk.BooleanVar(value=True)
+                lang_vars[lang] = var
+                ttk.Checkbutton(lang_frame, text="SkillName-%s" % lang,
+                                variable=var).pack(side="left", padx=2)
+            if not lang_vars:
+                ttk.Label(lang_frame, text="(no SkillName-*.dat found)").pack(side="left")
+
+    pick_row(0, "Datapack NPCs folder", v_npcs)
+    pick_row(1, "Client System folder", v_sys, on_set=refresh_langs)
+    v_sys.trace_add("write", lambda *a: refresh_langs())
+    pick_row(2, "Output folder", v_out)
+    ttk.Label(frm, text="Languages").grid(row=3, column=0, sticky="w", pady=2)
+    lang_frame.grid(row=3, column=1, sticky="w")
+
+    optf = ttk.LabelFrame(frm, text="Format options", padding=6)
+    optf.grid(row=4, column=0, columnspan=3, sticky="we", pady=(6, 2))
+    advf = ttk.LabelFrame(frm, text="Advanced (defaults are fine)", padding=6)
+    advf.grid(row=5, column=0, columnspan=3, sticky="we", pady=(2, 6))
+    opt_vars = {}
+
+    def opt(parent, rowcol, key, label, width=8):
+        r, c = rowcol
+        ttk.Label(parent, text=label).grid(row=r, column=c * 2, sticky="w", padx=(0, 3), pady=2)
+        var = tk.StringVar(value=str(DEFAULTS[key]))
+        opt_vars[key] = var
+        ttk.Entry(parent, textvariable=var, width=width).grid(row=r, column=c * 2 + 1,
+                                                              sticky="w", padx=(0, 12))
+
+    opt(optf, (0, 0), "min_chance", "Min chance %")
+    opt(optf, (0, 1), "max_items", "Max items (0=all)")
+    opt(optf, (0, 2), "max_line", "Max line width (0=off)")
+    opt(optf, (1, 0), "chance_decimals", "Chance decimals")
+    opt(optf, (1, 1), "title_drop", "Drop title", 12)
+    opt(optf, (1, 2), "title_spoil", "Spoil title", 12)
+    opt(advf, (0, 0), "max_chars", "Max tooltip chars")
+    opt(advf, (0, 1), "base_id", "Base skill id")
+    opt(advf, (0, 2), "trunc_suffix", "Truncation text", 12)
+    opt(advf, (1, 0), "header_char", "Header pad char")
+    opt(advf, (1, 1), "header_factor", "Header width factor")
+
+    logbox = scrolledtext.ScrolledText(frm, height=16, state="disabled",
+                                       font=("Consolas", 9))
+    logbox.grid(row=7, column=0, columnspan=3, sticky="nsew", pady=(6, 0))
+    frm.rowconfigure(7, weight=1)
+    frm.columnconfigure(1, weight=1)
+
+    btn = ttk.Button(frm, text="Generate")
+    btn.grid(row=6, column=0, columnspan=3, pady=6)
+
+    def log(s):
+        q.put(s)
+
+    def poll():
+        try:
+            while True:
+                s = q.get_nowait()
+                logbox.configure(state="normal")
+                if s is StopIteration:
+                    btn.configure(state="normal")
+                else:
+                    logbox.insert("end", str(s) + "\n")
+                    logbox.see("end")
+                logbox.configure(state="disabled")
+        except _queue.Empty:
+            pass
+        root.after(100, poll)
+
+    def num(key, cast):
+        try:
+            return cast(opt_vars[key].get())
+        except ValueError:
+            raise ToolError("Invalid value for %s: %r" % (key, opt_vars[key].get()))
+
+    def work(opts):
+        try:
+            run_pipeline(opts, log)
+        except ToolError as e:
+            log("\nERROR: %s" % e)
+        except Exception:
+            log("\nUNEXPECTED ERROR:\n" + traceback.format_exc())
+        finally:
+            q.put(StopIteration)
+
+    def start():
+        try:
+            langs = [l for l, v in lang_vars.items() if v.get()]
+            if not v_npcs.get() or not v_sys.get():
+                raise ToolError("Select the datapack NPCs folder and the client System folder")
+            if not langs:
+                raise ToolError("Select at least one SkillName language")
+            opts = dict(
+                npcs=v_npcs.get(), system=v_sys.get(), out=v_out.get(), langs=langs,
+                base_id=num("base_id", int), max_chars=num("max_chars", int),
+                max_line=num("max_line", int), max_items=num("max_items", int),
+                min_chance=num("min_chance", float),
+                chance_decimals=num("chance_decimals", int),
+                title_drop=opt_vars["title_drop"].get(),
+                title_spoil=opt_vars["title_spoil"].get(),
+                trunc_suffix=opt_vars["trunc_suffix"].get(),
+                header_char=opt_vars["header_char"].get() or "=",
+                header_factor=num("header_factor", float),
+            )
+        except ToolError as e:
+            messagebox.showerror(APP, str(e))
+            return
+        btn.configure(state="disabled")
+        logbox.configure(state="normal")
+        logbox.delete("1.0", "end")
+        logbox.configure(state="disabled")
+        threading.Thread(target=work, args=(opts,), daemon=True).start()
+
+    btn.configure(command=start)
+    poll()
+    if os.environ.get("L2DSG_SMOKE"):  # automated smoke test: open + close
+        root.after(1500, root.destroy)
+    root.mainloop()
+    return 0
+
+
+# ---------------------------------------------------------------- entry
+
+def _attach_console():
+    """Windowed (no-console) exe launched with CLI args from a terminal:
+    attach to the parent console so prints are visible; otherwise open one."""
+    if sys.platform == "win32" and getattr(sys, "frozen", False) and sys.stdout is None:
+        import ctypes
+        k = ctypes.windll.kernel32
+        if not k.AttachConsole(-1):  # ATTACH_PARENT_PROCESS
+            k.AllocConsole()
+        sys.stdout = open("CONOUT$", "w", buffering=1)
+        sys.stderr = open("CONOUT$", "w", buffering=1)
+
+
+def main():
+    if len(sys.argv) > 1:
+        _attach_console()
+        return cli(sys.argv[1:])
+    try:
+        return gui()
+    except Exception:
+        print("GUI unavailable, use CLI mode:\n")
+        build_parser().print_help()
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

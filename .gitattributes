@@ -1,0 +1,6 @@
+# The bundled toolchain must be byte-exact — never convert line endings.
+tools/** binary
+*.py text
+*.md text
+*.txt text
+*.bat text eol=crlf

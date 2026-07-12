@@ -1,0 +1,9 @@
+# build artifacts (regenerate with build.bat)
+build/
+dist/
+release/
+*.spec
+__pycache__/
+*.pyc
+# internal working docs
+FORUM_POST_L2JBRASIL.md
