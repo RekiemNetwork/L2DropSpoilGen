@@ -32,7 +32,7 @@ import subprocess
 import argparse
 
 APP = "L2DropSpoilGen"
-VERSION = "1.1"
+VERSION = "1.2"
 
 # Skill ids >= STRIP_FLOOR that use our icons are treated as leftovers from a
 # previous run of this tool and are removed before regenerating (idempotent
@@ -139,7 +139,7 @@ class Toolchain:
 
 ITEM_RE = re.compile(r'<item id="(\d+)"\s+min="(\d+)"\s+max="(\d+)"\s+chance="([\d.]+)"'
                      r'\s*[\\/]*>\s*(?:<!--\s*(.*?)\s*-->)?')
-NPC_RE = re.compile(r'<npc id="(\d+)"[^>]*>(.*?)</npc>', re.S)
+NPC_RE = re.compile(r'<npc id="(\d+)"([^>]*)>(.*?)</npc>', re.S)
 GROUP_RE = re.compile(r'<group chance="([\d.]+)"\s*>(.*?)</group>', re.S)
 
 
@@ -158,7 +158,8 @@ def _items_of(block):
     out = []
     for it in ITEM_RE.finditer(block):
         name = it.group(5) or ("item#" + it.group(1))
-        out.append((name, int(it.group(2)), int(it.group(3)), float(it.group(4))))
+        out.append((name, int(it.group(2)), int(it.group(3)), float(it.group(4)),
+                    int(it.group(1))))
     return out
 
 
@@ -169,7 +170,7 @@ def extract_npcs(npcs_dir, log):
     for f in files:
         data = open(f, encoding="utf-8", errors="replace").read()
         for m in NPC_RE.finditer(data):
-            block = m.group(2)
+            block = m.group(3)
             dl = re.search(r'<dropLists>(.*?)</dropLists>', block, re.S)
             if not dl:
                 continue
@@ -181,8 +182,8 @@ def extract_npcs(npcs_dir, log):
                 # items inside <group chance=..>: effective chance = group * item / 100
                 for g in GROUP_RE.finditer(inner):
                     gc = float(g.group(1))
-                    for name, mn, mx, ch in _items_of(g.group(2)):
-                        drop.append((name, mn, mx, gc * ch / 100.0))
+                    for name, mn, mx, ch, iid in _items_of(g.group(2)):
+                        drop.append((name, mn, mx, gc * ch / 100.0, iid))
                 # loose items directly in <drop> (no group): chance as-is
                 for item in _items_of(re.sub(r'<group.*?</group>', '', inner, flags=re.S)):
                     drop.append(item)
@@ -190,7 +191,9 @@ def extract_npcs(npcs_dir, log):
             if sm:
                 spoil = _items_of(sm.group(1))
             if drop or spoil:
-                res[int(m.group(1))] = {"drop": drop, "spoil": spoil}
+                t = re.search(r'type="([^"]*)"', m.group(2))
+                res[int(m.group(1))] = {"drop": drop, "spoil": spoil,
+                                        "raid": bool(t) and t.group(1) in ("RaidBoss", "GrandBoss")}
     nd = sum(1 for v in res.values() if v["drop"])
     ns = sum(1 for v in res.values() if v["spoil"])
     log("Datapack: %d XML files, %d NPCs with lists (%d drop, %d spoil)"
@@ -200,13 +203,152 @@ def extract_npcs(npcs_dir, log):
     return res
 
 
+# ---------------------------------------------------------------- server rates
+
+class Rates:
+    """Multipliers from the server's Rates.ini, mirroring the exact cascade of
+    L2J Mobius NpcTemplate.calculateDrops (per-item-id list -> herb -> raid ->
+    normal; spoil uses its own flat multipliers)."""
+
+    def __init__(self):
+        self.death_chance = self.death_amount = 1.0
+        self.spoil_chance = self.spoil_amount = 1.0
+        self.herb_chance = self.herb_amount = 1.0
+        self.raid_chance = self.raid_amount = 1.0
+        self.chance_by_id = {}
+        self.amount_by_id = {}
+
+    @property
+    def active(self):
+        return (any(v != 1.0 for v in (
+            self.death_chance, self.death_amount, self.spoil_chance,
+            self.spoil_amount, self.herb_chance, self.herb_amount,
+            self.raid_chance, self.raid_amount))
+            or self.chance_by_id or self.amount_by_id)
+
+
+def parse_rates_ini(path, log):
+    """Minimal java.util.Properties reader (#/! comments, backslash line
+    continuation, key = value) — same behavior as the server's config loader."""
+    if not os.path.isfile(path):
+        raise ToolError("Rates.ini not found: %s" % path)
+    kv, buf = {}, ""
+    for line in open(path, encoding="utf-8", errors="replace").read().splitlines():
+        s = line.strip()
+        if buf == "" and (not s or s[0] in "#!"):
+            continue
+        if s.endswith("\\"):
+            buf += s[:-1]
+            continue
+        buf += s
+        if "=" in buf:
+            k, v = buf.split("=", 1)
+            kv[k.strip()] = v.strip()
+        buf = ""
+
+    r = Rates()
+
+    def num(key, cur):
+        try:
+            return float(kv[key])
+        except (KeyError, ValueError):
+            return cur
+
+    def idmap(key):
+        out = {}
+        for part in kv.get(key, "").split(";"):
+            bits = part.split(",")
+            if len(bits) == 2:
+                try:
+                    out[int(bits[0])] = float(bits[1])
+                except ValueError:
+                    pass
+        return out
+
+    r.death_chance = num("DeathDropChanceMultiplier", 1.0)
+    r.death_amount = num("DeathDropAmountMultiplier", 1.0)
+    r.spoil_chance = num("SpoilDropChanceMultiplier", 1.0)
+    r.spoil_amount = num("SpoilDropAmountMultiplier", 1.0)
+    r.herb_chance = num("HerbDropChanceMultiplier", 1.0)
+    r.herb_amount = num("HerbDropAmountMultiplier", 1.0)
+    r.raid_chance = num("RaidDropChanceMultiplier", 1.0)
+    r.raid_amount = num("RaidDropAmountMultiplier", 1.0)
+    r.chance_by_id = idmap("DropChanceMultiplierByItemId")
+    r.amount_by_id = idmap("DropAmountMultiplierByItemId")
+
+    parts = []
+    for label, c, a in (("death", r.death_chance, r.death_amount),
+                        ("spoil", r.spoil_chance, r.spoil_amount),
+                        ("herb", r.herb_chance, r.herb_amount),
+                        ("raid", r.raid_chance, r.raid_amount)):
+        if c != 1.0 or a != 1.0:
+            parts.append("%s chance x%g amount x%g" % (label, c, a))
+    special = {k: v for k, v in r.chance_by_id.items() if v != 1.0}
+    if special or r.amount_by_id:
+        parts.append("%d per-item multipliers" % len(set(r.amount_by_id) | set(special)))
+    log("Rates.ini: %s" % ("; ".join(parts) if parts else "all multipliers are 1 (retail)"))
+    return r
+
+
+def load_herb_ids(npcs_dir, log):
+    """Item ids with ex_immediate_effect=true (herbs) from data/stats/items —
+    the server routes those through the Herb multipliers."""
+    items_dir = os.path.join(os.path.dirname(npcs_dir), "items")
+    if not os.path.isdir(items_dir):
+        log("WARNING: items folder not found next to npcs — herbs will use "
+            "normal drop multipliers in the generated text")
+        return frozenset()
+    herbs = set()
+    for f in glob.glob(os.path.join(items_dir, "*.xml")):
+        data = open(f, encoding="utf-8", errors="replace").read()
+        for m in re.finditer(r'<item id="(\d+)"(.*?)</item>', data, re.S):
+            if re.search(r'name="ex_immediate_effect"\s+val="true"', m.group(2)):
+                herbs.add(int(m.group(1)))
+    return frozenset(herbs)
+
+
+def apply_rates(items, kind, raid, rates, herbs):
+    """Same math the server applies on kill, minus per-player factors
+    (premium/champion/level gap). Amounts floor like the server's (long) cast;
+    chance-0 items are removed; display chance is capped at 100%."""
+    out = []
+    for name, mn, mx, ch, iid in items:
+        if kind == "spoil":
+            rc, ra = rates.spoil_chance, rates.spoil_amount
+        else:
+            if iid in rates.chance_by_id:
+                rc = rates.chance_by_id[iid]
+                if iid == 57 and rc > 100:
+                    rc = 100.0
+            elif iid in herbs:
+                rc = rates.herb_chance
+            elif raid:
+                rc = rates.raid_chance
+            else:
+                rc = rates.death_chance
+            if iid in rates.amount_by_id:
+                ra = rates.amount_by_id[iid]
+            elif iid in herbs:
+                ra = rates.herb_amount
+            elif raid:
+                ra = rates.raid_amount
+            else:
+                ra = rates.death_amount
+        ch = min(ch * rc, 100.0)
+        if ch <= 0:
+            continue
+        out.append((name, int(mn * ra), int(mx * ra), ch, iid))
+    return out
+
+
 # ---------------------------------------------------------------- text generation
 
 def fmt_chance(x, decimals):
     return ("%.*f" % (decimals, x)).rstrip("0").rstrip(".")
 
 
-def format_item(name, mn, mx, ch, o):
+def format_item(it, o):
+    name, mn, mx, ch = it[0], it[1], it[2], it[3]
     amt = "" if (mn == mx == 1) else (" %d" % mn if mn == mx else " %d-%d" % (mn, mx))
     tail = "%s (%s%%)" % (amt, fmt_chance(ch, o["chance_decimals"]))
     line = name + tail
@@ -223,7 +365,7 @@ def make_lines(items, o):
     if o["max_items"] and len(items) > o["max_items"]:
         hidden = len(items) - o["max_items"]
         items = items[:o["max_items"]]
-    lines = [format_item(*it, o) for it in items]
+    lines = [format_item(it, o) for it in items]
     if hidden:
         lines.append("+%d more..." % hidden)
     return lines
@@ -300,7 +442,7 @@ def find_template(rows, o):
     raise ToolError("Template SkillGrp row has no icon column")
 
 
-def generate(drops, sg_rows, o, log):
+def generate(drops, sg_rows, o, log, rates=None, herbs=frozenset()):
     """-> (new_sg_rows, new_sn_rows, skmap {npc_id: [sid, lvl, ...]})"""
     tmpl, icon_col = find_template(sg_rows, o)
     existing = set(i for i in (row_id(r) for r in sg_rows) if i is not None and i >= o["base_id"])
@@ -311,7 +453,11 @@ def generate(drops, sg_rows, o, log):
         pairs = []
         for kind, icon, title in (("drop", o["drop_icon"], o["title_drop"]),
                                   ("spoil", o["spoil_icon"], o["title_spoil"])):
-            lines = make_lines(drops[npc][kind], o)
+            items = drops[npc][kind]
+            if rates is not None and rates.active:
+                items = apply_rates(items, kind, drops[npc].get("raid", False),
+                                    rates, herbs)
+            lines = make_lines(items, o)
             if not lines:
                 continue
             sid = nid
@@ -587,10 +733,17 @@ def run_pipeline(opts, log):
         # 2) extract drop/spoil from the datapack
         drops = extract_npcs(npcs_dir, log)
 
+        # 2b) optional server rates
+        rates, herbs = None, frozenset()
+        if o.get("rates_ini"):
+            rates = parse_rates_ini(o["rates_ini"], log)
+            if rates.active:
+                herbs = load_herb_ids(npcs_dir, log)
+
         # 3) generate skills (cleaning any previous run first)
         sg_rows = load_rows(os.path.join(workdir, "sg.txt"))
         sg_rows, strip_ids = clean_skillgrp(sg_rows, o, log)
-        new_sg, new_sn, skmap = generate(drops, sg_rows, o, log)
+        new_sg, new_sn, skmap = generate(drops, sg_rows, o, log, rates, herbs)
         planned = set()
         for pairs in skmap.values():
             planned.update(pairs[0::2])
@@ -655,6 +808,8 @@ def build_parser():
     p.add_argument("--out", default="output", help="output folder (default: ./output)")
     p.add_argument("--lang", help="SkillName language(s), comma separated "
                                   "(default: all SkillName-*.dat found)")
+    p.add_argument("--rates-ini", help="server Rates.ini — shown chances/amounts "
+                                       "get the same multipliers the server applies")
     g = p.add_argument_group("format options")
     g.add_argument("--base-id", type=int, help="first custom skill id (default 30001)")
     g.add_argument("--max-chars", type=int, help="max tooltip length in chars (default 1500)")
@@ -680,7 +835,7 @@ def cli(argv):
     if not args.npcs or not args.system:
         build_parser().error("--npcs and --system are required in CLI mode")
     opts = dict(
-        npcs=args.npcs, system=args.system, out=args.out,
+        npcs=args.npcs, system=args.system, out=args.out, rates_ini=args.rates_ini,
         langs=[l.strip().lower() for l in args.lang.split(",")] if args.lang else None,
         base_id=args.base_id, max_chars=args.max_chars, max_line=args.max_line,
         max_items=args.max_items, min_chance=args.min_chance,
@@ -732,6 +887,7 @@ def gui():
     v_npcs = tk.StringVar()
     v_sys = tk.StringVar()
     v_out = tk.StringVar(value=os.path.abspath("output"))
+    v_rates = tk.StringVar()
 
     lang_frame = ttk.Frame(frm)
 
@@ -753,13 +909,14 @@ def gui():
     pick_row(1, "Client System folder", v_sys, on_set=refresh_langs)
     v_sys.trace_add("write", lambda *a: refresh_langs())
     pick_row(2, "Output folder", v_out)
-    ttk.Label(frm, text="Languages").grid(row=3, column=0, sticky="w", pady=2)
-    lang_frame.grid(row=3, column=1, sticky="w")
+    pick_row(3, "Server Rates.ini (optional)", v_rates, isdir=False)
+    ttk.Label(frm, text="Languages").grid(row=4, column=0, sticky="w", pady=2)
+    lang_frame.grid(row=4, column=1, sticky="w")
 
     optf = ttk.LabelFrame(frm, text="Format options", padding=6)
-    optf.grid(row=4, column=0, columnspan=3, sticky="we", pady=(6, 2))
+    optf.grid(row=5, column=0, columnspan=3, sticky="we", pady=(6, 2))
     advf = ttk.LabelFrame(frm, text="Advanced (defaults are fine)", padding=6)
-    advf.grid(row=5, column=0, columnspan=3, sticky="we", pady=(2, 6))
+    advf.grid(row=6, column=0, columnspan=3, sticky="we", pady=(2, 6))
     opt_vars = {}
 
     def opt(parent, rowcol, key, label, width=8):
@@ -784,12 +941,12 @@ def gui():
 
     logbox = scrolledtext.ScrolledText(frm, height=16, state="disabled",
                                        font=("Consolas", 9))
-    logbox.grid(row=7, column=0, columnspan=3, sticky="nsew", pady=(6, 0))
-    frm.rowconfigure(7, weight=1)
+    logbox.grid(row=8, column=0, columnspan=3, sticky="nsew", pady=(6, 0))
+    frm.rowconfigure(8, weight=1)
     frm.columnconfigure(1, weight=1)
 
     btn = ttk.Button(frm, text="Generate")
-    btn.grid(row=6, column=0, columnspan=3, pady=6)
+    btn.grid(row=7, column=0, columnspan=3, pady=6)
 
     def log(s):
         q.put(s)
@@ -834,6 +991,7 @@ def gui():
                 raise ToolError("Select at least one SkillName language")
             opts = dict(
                 npcs=v_npcs.get(), system=v_sys.get(), out=v_out.get(), langs=langs,
+                rates_ini=v_rates.get().strip() or None,
                 base_id=num("base_id", int), max_chars=num("max_chars", int),
                 max_line=num("max_line", int), max_items=num("max_items", int),
                 min_chance=num("min_chance", float),

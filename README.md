@@ -1,4 +1,4 @@
-# L2DropSpoilGen 1.1 — Drop/Spoil on-hover target icons (HighFive)
+# L2DropSpoilGen 1.2 — Drop/Spoil on-hover target icons (HighFive)
 
 Adds a **Drop** icon (adena coin) and a **Spoil** icon to every monster's target
 window. Hovering an icon shows that monster's **full drop / spoil list** with
@@ -43,6 +43,7 @@ L2DropSpoilGen.exe --npcs <datapack>\data\stats\npcs --system <client>\System --
 | Option | Default | Meaning |
 |---|---|---|
 | `--lang es,e` | all found | which `SkillName-<lang>.dat` to patch |
+| `--rates-ini <path>` | off | your server's `Rates.ini` — shown chances/amounts get the **same multipliers the server applies** (per-item-id lists, herb/raid/normal cascade, spoil rates; chance-0 items are hidden) |
 | `--min-chance 0.01` | 0 (off) | hide items below this chance % |
 | `--max-items 30` | 0 (off) | cap items per list (adds `+N more...`) |
 | `--max-line 70` | 0 (off) | cap line width (long item names are shortened) |
@@ -60,6 +61,13 @@ format options freely.
 
 ## Notes
 
+- **Server rates** (`--rates-ini`, or the "Server Rates.ini" field in the GUI):
+  the tool clones L2J Mobius' exact drop-rate cascade from
+  `NpcTemplate.calculateDrops` — `DropChance/AmountMultiplierByItemId` first,
+  then herb (`ex_immediate_effect` items, detected from `data/stats/items`),
+  then raid (`type="RaidBoss|GrandBoss"`), then the normal Death multipliers;
+  spoil uses the flat Spoil multipliers. Per-player factors (premium, champion,
+  level-gap, drop buffs) are runtime-only and cannot be shown statically.
 - Generated skill ids `30001+` are far above retail HighFive's maximum (26073).
   If your server already uses client skills in that range, change `--base-id`.
 - The tooltip text lives in the skill **name** field on purpose: the
