@@ -1068,9 +1068,7 @@ def gui():
         combo.bind("<<ComboboxSelected>>", on_lang)
 
         def pick_row(row, label, help_text, var, isdir=True):
-            lbl = ttk.Label(frm, text=label)
-            lbl.grid(row=row, column=0, sticky="w", pady=2)
-            Tip(lbl, help_text)
+            ttk.Label(frm, text=label).grid(row=row, column=0, sticky="w", pady=2)
             ttk.Entry(frm, textvariable=var, width=58).grid(row=row, column=1,
                                                             sticky="we", padx=4)
 
@@ -1087,9 +1085,7 @@ def gui():
         pick_row(3, T["out"], T["h_out"], v_out)
         pick_row(4, T["rates"], T["h_rates"], v_rates, isdir=False)
 
-        lbl_sn = ttk.Label(frm, text=T["sn"])
-        lbl_sn.grid(row=5, column=0, sticky="w", pady=2)
-        Tip(lbl_sn, T["h_sn"])
+        ttk.Label(frm, text=T["sn"]).grid(row=5, column=0, sticky="w", pady=2)
         ui["lang_frame"] = ttk.Frame(frm)
         ui["lang_frame"].grid(row=5, column=1, sticky="w")
         help_mark(frm, T["h_sn"]).grid(row=5, column=3, padx=(4, 0))
@@ -1102,9 +1098,8 @@ def gui():
 
         def opt(parent, rowcol, key, width=8):
             r, c = rowcol
-            lbl = ttk.Label(parent, text=T[key])
-            lbl.grid(row=r, column=c * 3, sticky="w", padx=(0, 3), pady=2)
-            Tip(lbl, T["h_" + key])
+            ttk.Label(parent, text=T[key]).grid(row=r, column=c * 3, sticky="w",
+                                                padx=(0, 3), pady=2)
             ttk.Entry(parent, textvariable=opt_vars[key], width=width).grid(
                 row=r, column=c * 3 + 1, sticky="w")
             help_mark(parent, T["h_" + key]).grid(row=r, column=c * 3 + 2,
