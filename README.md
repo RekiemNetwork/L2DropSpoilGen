@@ -1,4 +1,4 @@
-# L2DropSpoilGen 1.2 — Drop/Spoil on-hover target icons (HighFive)
+# L2DropSpoilGen 1.3 — Drop/Spoil on-hover target icons (HighFive)
 
 Adds a **Drop** icon (adena coin) and a **Spoil** icon to every monster's target
 window. Hovering an icon shows that monster's **full drop / spoil list** with
@@ -23,7 +23,9 @@ The tool patches 3 files of the client's `System` folder:
 ## Usage
 
 ### GUI
-Run `L2DropSpoilGen.exe` with no arguments:
+Run `L2DropSpoilGen.exe` with no arguments. The interface is available in
+**English, Español and Português** (auto-detected from your system, switchable
+top-right) and every field has a **"?" hover tooltip** explaining what it does:
 
 1. **Datapack NPCs folder** — your datapack's `data/stats/npcs` (the datapack
    root also works).

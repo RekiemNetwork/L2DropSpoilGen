@@ -32,7 +32,7 @@ import subprocess
 import argparse
 
 APP = "L2DropSpoilGen"
-VERSION = "1.2"
+VERSION = "1.3"
 
 # Skill ids >= STRIP_FLOOR that use our icons are treated as leftovers from a
 # previous run of this tool and are removed before regenerating (idempotent
@@ -855,98 +855,295 @@ def cli(argv):
 
 # ---------------------------------------------------------------- GUI
 
+WEBSITE = "https://rekiemgames.com"
+
+L10N = {
+    "en": dict(
+        subtitle="Drop/Spoil target icons — L2J Mobius datapacks · High Five clients",
+        footer="Created by Rekiem Games Network · rekiemgames.com — free community tool",
+        npcs="Datapack NPCs folder", sys="Client System folder", out="Output folder",
+        rates="Server Rates.ini (optional)", sn="SkillName languages",
+        fmt="Format options", adv="Advanced (defaults are fine)", generate="Generate",
+        no_sn="(no SkillName-*.dat found)",
+        err_paths="Select the datapack NPCs folder and the client System folder",
+        err_langs="Select at least one SkillName language",
+        min_chance="Min chance %", max_items="Max items (0=all)",
+        max_line="Max line width (0=off)", chance_decimals="Chance decimals",
+        title_drop="Drop title", title_spoil="Spoil title",
+        max_chars="Max tooltip chars", base_id="Base skill id",
+        trunc_suffix="Truncation text", header_char="Header pad char",
+        header_factor="Header width factor",
+        h_npcs="Your L2J Mobius datapack's data/stats/npcs folder (the datapack root also works). Drop and spoil lists are read from these XMLs.",
+        h_sys="The High Five client's System folder with the ORIGINAL npcgrp.dat, SkillGrp.dat and SkillName-*.dat.",
+        h_out="Where the 3 patched .dat files are written. Nothing is written into the client directly — back up your originals and copy these over them.",
+        h_rates="Optional: your server's Rates.ini. Shown chances/amounts then include the same multipliers the server applies (per-item ids, herb, raid, spoil). Leave empty to show raw datapack values.",
+        h_sn="Which SkillName-<lang>.dat files to patch — pick the language(s) your client uses.",
+        h_min_chance="Hide items whose final chance is below this % (0 = show everything).",
+        h_max_items="Show at most this many items per list; the rest becomes '+N more...' (0 = no limit).",
+        h_max_line="Maximum line width; longer item names are shortened with '...' (0 = no limit).",
+        h_chance_decimals="Decimals shown in chances: 4 shows 0.0237%, 2 shows 0.02%.",
+        h_title_drop="Header title shown above the drop list.",
+        h_title_spoil="Header title shown above the spoil list.",
+        h_max_chars="Hard cap for the whole tooltip text; very long lists (bosses) get cut.",
+        h_base_id="First generated skill id (30001 is above retail's max 26073). Change only if your server already uses these client skill ids.",
+        h_trunc_suffix="Text appended when a list is cut by the tooltip cap.",
+        h_header_char="Padding character used to build the header line.",
+        h_header_factor="Header width relative to the widest line (1.0 = equal, 0.95 = slightly shorter).",
+    ),
+    "es": dict(
+        subtitle="Iconos de Drop/Spoil en el target — datapacks L2J Mobius · clientes High Five",
+        footer="Creado por Rekiem Games Network · rekiemgames.com — herramienta gratuita para la comunidad",
+        npcs="Carpeta NPCs del datapack", sys="Carpeta System del cliente", out="Carpeta de salida",
+        rates="Rates.ini del servidor (opcional)", sn="Idiomas SkillName",
+        fmt="Opciones de formato", adv="Avanzado (los valores por defecto van bien)", generate="Generar",
+        no_sn="(no se encontró SkillName-*.dat)",
+        err_paths="Selecciona la carpeta NPCs del datapack y la carpeta System del cliente",
+        err_langs="Selecciona al menos un idioma de SkillName",
+        min_chance="Chance mínima %", max_items="Máx. items (0=todos)",
+        max_line="Ancho máx. línea (0=off)", chance_decimals="Decimales del %",
+        title_drop="Título Drop", title_spoil="Título Spoil",
+        max_chars="Máx. caracteres tooltip", base_id="Id base de skill",
+        trunc_suffix="Texto de recorte", header_char="Carácter de cabecera",
+        header_factor="Factor ancho cabecera",
+        h_npcs="Carpeta data/stats/npcs de tu datapack L2J Mobius (también vale la raíz del datapack). De estos XML se leen las listas de drop y spoil.",
+        h_sys="Carpeta System del cliente High Five con los npcgrp.dat, SkillGrp.dat y SkillName-*.dat ORIGINALES.",
+        h_out="Dónde se escriben los 3 .dat generados. No se escribe nada en el cliente directamente — haz backup de los originales y cópialos tú encima.",
+        h_rates="Opcional: el Rates.ini de tu servidor. Los números mostrados incluirán los mismos multiplicadores que aplica el servidor (per-item, herbs, raid, spoil). Vacío = valores del datapack tal cual.",
+        h_sn="Qué SkillName-<idioma>.dat parchear — marca el idioma que usa tu cliente.",
+        h_min_chance="Oculta items cuyo chance final sea menor que este % (0 = mostrar todo).",
+        h_max_items="Muestra como máximo estos items por lista; el resto sale como '+N more...' (0 = sin límite).",
+        h_max_line="Ancho máximo de línea; los nombres largos se acortan con '...' (0 = sin límite).",
+        h_chance_decimals="Decimales del porcentaje: 4 muestra 0.0237%, 2 muestra 0.02%.",
+        h_title_drop="Título de la cabecera sobre la lista de drop.",
+        h_title_spoil="Título de la cabecera sobre la lista de spoil.",
+        h_max_chars="Tope duro del texto del tooltip; las listas muy largas (bosses) se recortan.",
+        h_base_id="Primer id de skill generado (30001, por encima del máximo retail 26073). Cámbialo solo si tu servidor ya usa esos ids en el cliente.",
+        h_trunc_suffix="Texto que se añade cuando la lista se recorta por el tope.",
+        h_header_char="Carácter de relleno con el que se construye la cabecera.",
+        h_header_factor="Ancho de la cabecera respecto a la línea más larga (1.0 = igualar, 0.95 = un poco más corta).",
+    ),
+    "pt": dict(
+        subtitle="Ícones de Drop/Spoil no alvo — datapacks L2J Mobius · clientes High Five",
+        footer="Criado por Rekiem Games Network · rekiemgames.com — ferramenta gratuita para a comunidade",
+        npcs="Pasta NPCs do datapack", sys="Pasta System do cliente", out="Pasta de saída",
+        rates="Rates.ini do servidor (opcional)", sn="Idiomas SkillName",
+        fmt="Opções de formato", adv="Avançado (os padrões funcionam bem)", generate="Gerar",
+        no_sn="(nenhum SkillName-*.dat encontrado)",
+        err_paths="Selecione a pasta NPCs do datapack e a pasta System do cliente",
+        err_langs="Selecione pelo menos um idioma de SkillName",
+        min_chance="Chance mínima %", max_items="Máx. itens (0=todos)",
+        max_line="Largura máx. linha (0=off)", chance_decimals="Decimais do %",
+        title_drop="Título Drop", title_spoil="Título Spoil",
+        max_chars="Máx. caracteres tooltip", base_id="Id base da skill",
+        trunc_suffix="Texto de corte", header_char="Caractere do cabeçalho",
+        header_factor="Fator largura cabeçalho",
+        h_npcs="Pasta data/stats/npcs do seu datapack L2J Mobius (a raiz do datapack também funciona). As listas de drop e spoil são lidas desses XMLs.",
+        h_sys="Pasta System do cliente High Five com os npcgrp.dat, SkillGrp.dat e SkillName-*.dat ORIGINAIS.",
+        h_out="Onde os 3 .dat gerados são escritos. Nada é escrito direto no cliente — faça backup dos originais e copie por cima você mesmo.",
+        h_rates="Opcional: o Rates.ini do seu servidor. Os números mostrados incluirão os mesmos multiplicadores que o servidor aplica (per-item, herbs, raid, spoil). Vazio = valores do datapack.",
+        h_sn="Quais SkillName-<idioma>.dat corrigir — marque o idioma que o seu cliente usa.",
+        h_min_chance="Esconde itens com chance final abaixo deste % (0 = mostrar tudo).",
+        h_max_items="Mostra no máximo esta quantidade de itens por lista; o resto vira '+N more...' (0 = sem limite).",
+        h_max_line="Largura máxima da linha; nomes longos são encurtados com '...' (0 = sem limite).",
+        h_chance_decimals="Decimais da chance: 4 mostra 0.0237%, 2 mostra 0.02%.",
+        h_title_drop="Título do cabeçalho acima da lista de drop.",
+        h_title_spoil="Título do cabeçalho acima da lista de spoil.",
+        h_max_chars="Limite do texto do tooltip; listas muito longas (bosses) são cortadas.",
+        h_base_id="Primeiro id de skill gerado (30001, acima do máximo retail 26073). Mude apenas se o seu servidor já usa esses ids no cliente.",
+        h_trunc_suffix="Texto adicionado quando a lista é cortada pelo limite.",
+        h_header_char="Caractere de preenchimento do cabeçalho.",
+        h_header_factor="Largura do cabeçalho em relação à linha mais larga (1.0 = igual, 0.95 = um pouco mais curto).",
+    ),
+}
+
+LANG_NAMES = {"en": "English", "es": "Español", "pt": "Português"}
+
+
 def gui():
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox, scrolledtext
     import threading
     import queue as _queue
+    import locale
+    import webbrowser
 
     root = tk.Tk()
-    root.title("%s %s — Drop/Spoil target icons (L2 HighFive)" % (APP, VERSION))
-    root.minsize(640, 560)
+    root.title("%s %s — Rekiem Games Network" % (APP, VERSION))
+    root.minsize(660, 600)
 
     q = _queue.Queue()
-    lang_vars = {}
 
-    frm = ttk.Frame(root, padding=10)
-    frm.pack(fill="both", expand=True)
+    # UI language: auto-detect, switchable at runtime
+    loc = ""
+    try:
+        loc = (locale.getlocale()[0] or "").lower()
+    except Exception:
+        pass
+    cur = {"lang": "es" if loc.startswith(("es", "spanish")) else
+                   "pt" if loc.startswith(("pt", "portug")) else "en"}
 
-    def pick_row(row, label, var, isdir=True, on_set=None):
-        ttk.Label(frm, text=label).grid(row=row, column=0, sticky="w", pady=2)
-        e = ttk.Entry(frm, textvariable=var, width=58)
-        e.grid(row=row, column=1, sticky="we", padx=4)
-
-        def browse():
-            d = filedialog.askdirectory() if isdir else filedialog.askopenfilename()
-            if d:
-                var.set(d)
-                if on_set:
-                    on_set()
-        ttk.Button(frm, text="...", width=3, command=browse).grid(row=row, column=2)
-
+    # state that survives language switches
     v_npcs = tk.StringVar()
     v_sys = tk.StringVar()
     v_out = tk.StringVar(value=os.path.abspath("output"))
     v_rates = tk.StringVar()
+    opt_vars = {k: tk.StringVar(value=str(DEFAULTS[k])) for k in
+                ("min_chance", "max_items", "max_line", "chance_decimals",
+                 "title_drop", "title_spoil", "max_chars", "base_id",
+                 "trunc_suffix", "header_char", "header_factor")}
+    lang_vars, lang_state = {}, {}
+    ui = {"running": False, "logtext": []}
 
-    lang_frame = ttk.Frame(frm)
+    class Tip:
+        def __init__(self, widget, text):
+            self.w, self.text, self.tip = widget, text, None
+            widget.bind("<Enter>", self.show)
+            widget.bind("<Leave>", self.hide)
+
+        def show(self, _e):
+            if self.tip:
+                return
+            self.tip = tk.Toplevel(self.w)
+            self.tip.wm_overrideredirect(True)
+            self.tip.wm_geometry("+%d+%d" % (self.w.winfo_rootx() + 14,
+                                             self.w.winfo_rooty() + self.w.winfo_height() + 6))
+            tk.Label(self.tip, text=self.text, justify="left", wraplength=360,
+                     background="#ffffe0", relief="solid", borderwidth=1,
+                     padx=6, pady=4).pack()
+
+        def hide(self, _e):
+            if self.tip:
+                self.tip.destroy()
+                self.tip = None
+
+    def help_mark(parent, text):
+        lbl = ttk.Label(parent, text="?", foreground="#1a6fc4",
+                        cursor="question_arrow", font=(None, 9, "bold"))
+        Tip(lbl, text)
+        return lbl
 
     def refresh_langs():
-        for w in lang_frame.winfo_children():
+        lf = ui.get("lang_frame")
+        if not lf:
+            return
+        T = L10N[cur["lang"]]
+        for l, v in lang_vars.items():
+            lang_state[l] = v.get()
+        for w in lf.winfo_children():
             w.destroy()
         lang_vars.clear()
         d = v_sys.get()
         if os.path.isdir(d):
             for lang in detect_langs(d):
-                var = tk.BooleanVar(value=True)
+                var = tk.BooleanVar(value=lang_state.get(lang, True))
                 lang_vars[lang] = var
-                ttk.Checkbutton(lang_frame, text="SkillName-%s" % lang,
+                ttk.Checkbutton(lf, text="SkillName-%s" % lang,
                                 variable=var).pack(side="left", padx=2)
             if not lang_vars:
-                ttk.Label(lang_frame, text="(no SkillName-*.dat found)").pack(side="left")
+                ttk.Label(lf, text=T["no_sn"]).pack(side="left")
 
-    pick_row(0, "Datapack NPCs folder", v_npcs)
-    pick_row(1, "Client System folder", v_sys, on_set=refresh_langs)
     v_sys.trace_add("write", lambda *a: refresh_langs())
-    pick_row(2, "Output folder", v_out)
-    pick_row(3, "Server Rates.ini (optional)", v_rates, isdir=False)
-    ttk.Label(frm, text="Languages").grid(row=4, column=0, sticky="w", pady=2)
-    lang_frame.grid(row=4, column=1, sticky="w")
 
-    optf = ttk.LabelFrame(frm, text="Format options", padding=6)
-    optf.grid(row=5, column=0, columnspan=3, sticky="we", pady=(6, 2))
-    advf = ttk.LabelFrame(frm, text="Advanced (defaults are fine)", padding=6)
-    advf.grid(row=6, column=0, columnspan=3, sticky="we", pady=(2, 6))
-    opt_vars = {}
+    def build():
+        T = L10N[cur["lang"]]
+        if ui.get("frame"):
+            ui["frame"].destroy()
+        frm = ttk.Frame(root, padding=10)
+        frm.pack(fill="both", expand=True)
+        ui["frame"] = frm
 
-    def opt(parent, rowcol, key, label, width=8):
-        r, c = rowcol
-        ttk.Label(parent, text=label).grid(row=r, column=c * 2, sticky="w", padx=(0, 3), pady=2)
-        var = tk.StringVar(value=str(DEFAULTS[key]))
-        opt_vars[key] = var
-        ttk.Entry(parent, textvariable=var, width=width).grid(row=r, column=c * 2 + 1,
-                                                              sticky="w", padx=(0, 12))
+        # top bar: subtitle + UI language selector
+        top = ttk.Frame(frm)
+        top.grid(row=0, column=0, columnspan=4, sticky="we", pady=(0, 8))
+        ttk.Label(top, text=T["subtitle"], font=(None, 9, "bold")).pack(side="left")
+        combo = ttk.Combobox(top, values=[LANG_NAMES[c] for c in ("en", "es", "pt")],
+                             width=10, state="readonly")
+        combo.set(LANG_NAMES[cur["lang"]])
+        combo.pack(side="right")
+        ttk.Label(top, text="🌐").pack(side="right", padx=(0, 3))
 
-    opt(optf, (0, 0), "min_chance", "Min chance %")
-    opt(optf, (0, 1), "max_items", "Max items (0=all)")
-    opt(optf, (0, 2), "max_line", "Max line width (0=off)")
-    opt(optf, (1, 0), "chance_decimals", "Chance decimals")
-    opt(optf, (1, 1), "title_drop", "Drop title", 12)
-    opt(optf, (1, 2), "title_spoil", "Spoil title", 12)
-    opt(advf, (0, 0), "max_chars", "Max tooltip chars")
-    opt(advf, (0, 1), "base_id", "Base skill id")
-    opt(advf, (0, 2), "trunc_suffix", "Truncation text", 12)
-    opt(advf, (1, 0), "header_char", "Header pad char")
-    opt(advf, (1, 1), "header_factor", "Header width factor")
+        def on_lang(_e):
+            cur["lang"] = {v: k for k, v in LANG_NAMES.items()}[combo.get()]
+            build()
+        combo.bind("<<ComboboxSelected>>", on_lang)
 
-    logbox = scrolledtext.ScrolledText(frm, height=16, state="disabled",
-                                       font=("Consolas", 9))
-    logbox.grid(row=8, column=0, columnspan=3, sticky="nsew", pady=(6, 0))
-    frm.rowconfigure(8, weight=1)
-    frm.columnconfigure(1, weight=1)
+        def pick_row(row, label, help_text, var, isdir=True):
+            lbl = ttk.Label(frm, text=label)
+            lbl.grid(row=row, column=0, sticky="w", pady=2)
+            Tip(lbl, help_text)
+            ttk.Entry(frm, textvariable=var, width=58).grid(row=row, column=1,
+                                                            sticky="we", padx=4)
 
-    btn = ttk.Button(frm, text="Generate")
-    btn.grid(row=7, column=0, columnspan=3, pady=6)
+            def browse():
+                d = filedialog.askdirectory() if isdir else filedialog.askopenfilename(
+                    filetypes=[("Rates.ini", "*.ini"), ("*", "*.*")])
+                if d:
+                    var.set(d)
+            ttk.Button(frm, text="...", width=3, command=browse).grid(row=row, column=2)
+            help_mark(frm, help_text).grid(row=row, column=3, padx=(4, 0))
+
+        pick_row(1, T["npcs"], T["h_npcs"], v_npcs)
+        pick_row(2, T["sys"], T["h_sys"], v_sys)
+        pick_row(3, T["out"], T["h_out"], v_out)
+        pick_row(4, T["rates"], T["h_rates"], v_rates, isdir=False)
+
+        lbl_sn = ttk.Label(frm, text=T["sn"])
+        lbl_sn.grid(row=5, column=0, sticky="w", pady=2)
+        Tip(lbl_sn, T["h_sn"])
+        ui["lang_frame"] = ttk.Frame(frm)
+        ui["lang_frame"].grid(row=5, column=1, sticky="w")
+        help_mark(frm, T["h_sn"]).grid(row=5, column=3, padx=(4, 0))
+        refresh_langs()
+
+        optf = ttk.LabelFrame(frm, text=T["fmt"], padding=6)
+        optf.grid(row=6, column=0, columnspan=4, sticky="we", pady=(6, 2))
+        advf = ttk.LabelFrame(frm, text=T["adv"], padding=6)
+        advf.grid(row=7, column=0, columnspan=4, sticky="we", pady=(2, 6))
+
+        def opt(parent, rowcol, key, width=8):
+            r, c = rowcol
+            lbl = ttk.Label(parent, text=T[key])
+            lbl.grid(row=r, column=c * 3, sticky="w", padx=(0, 3), pady=2)
+            Tip(lbl, T["h_" + key])
+            ttk.Entry(parent, textvariable=opt_vars[key], width=width).grid(
+                row=r, column=c * 3 + 1, sticky="w")
+            help_mark(parent, T["h_" + key]).grid(row=r, column=c * 3 + 2,
+                                                  sticky="w", padx=(2, 12))
+
+        opt(optf, (0, 0), "min_chance")
+        opt(optf, (0, 1), "max_items")
+        opt(optf, (0, 2), "max_line")
+        opt(optf, (1, 0), "chance_decimals")
+        opt(optf, (1, 1), "title_drop", 12)
+        opt(optf, (1, 2), "title_spoil", 12)
+        opt(advf, (0, 0), "max_chars")
+        opt(advf, (0, 1), "base_id")
+        opt(advf, (0, 2), "trunc_suffix", 12)
+        opt(advf, (1, 0), "header_char")
+        opt(advf, (1, 1), "header_factor")
+
+        btn = ttk.Button(frm, text=T["generate"], command=start)
+        btn.grid(row=8, column=0, columnspan=4, pady=6)
+        if ui["running"]:
+            btn.configure(state="disabled")
+        ui["btn"] = btn
+
+        logbox = scrolledtext.ScrolledText(frm, height=14, state="disabled",
+                                           font=("Consolas", 9))
+        logbox.grid(row=9, column=0, columnspan=4, sticky="nsew", pady=(6, 0))
+        if ui["logtext"]:
+            logbox.configure(state="normal")
+            logbox.insert("end", "\n".join(ui["logtext"]) + "\n")
+            logbox.see("end")
+            logbox.configure(state="disabled")
+        ui["logbox"] = logbox
+        frm.rowconfigure(9, weight=1)
+        frm.columnconfigure(1, weight=1)
+
+        footer = ttk.Label(frm, text=T["footer"], foreground="#777777",
+                           cursor="hand2", font=(None, 8))
+        footer.grid(row=10, column=0, columnspan=4, pady=(6, 0))
+        footer.bind("<Button-1>", lambda _e: webbrowser.open(WEBSITE))
 
     def log(s):
         q.put(s)
@@ -955,14 +1152,21 @@ def gui():
         try:
             while True:
                 s = q.get_nowait()
-                logbox.configure(state="normal")
                 if s is StopIteration:
-                    btn.configure(state="normal")
+                    ui["running"] = False
+                    if ui.get("btn"):
+                        ui["btn"].configure(state="normal")
                 else:
-                    logbox.insert("end", str(s) + "\n")
-                    logbox.see("end")
-                logbox.configure(state="disabled")
+                    ui["logtext"].append(str(s))
+                    lb = ui.get("logbox")
+                    if lb:
+                        lb.configure(state="normal")
+                        lb.insert("end", str(s) + "\n")
+                        lb.see("end")
+                        lb.configure(state="disabled")
         except _queue.Empty:
+            pass
+        except tk.TclError:
             pass
         root.after(100, poll)
 
@@ -983,12 +1187,13 @@ def gui():
             q.put(StopIteration)
 
     def start():
+        T = L10N[cur["lang"]]
         try:
             langs = [l for l, v in lang_vars.items() if v.get()]
             if not v_npcs.get() or not v_sys.get():
-                raise ToolError("Select the datapack NPCs folder and the client System folder")
+                raise ToolError(T["err_paths"])
             if not langs:
-                raise ToolError("Select at least one SkillName language")
+                raise ToolError(T["err_langs"])
             opts = dict(
                 npcs=v_npcs.get(), system=v_sys.get(), out=v_out.get(), langs=langs,
                 rates_ini=v_rates.get().strip() or None,
@@ -1005,13 +1210,16 @@ def gui():
         except ToolError as e:
             messagebox.showerror(APP, str(e))
             return
-        btn.configure(state="disabled")
-        logbox.configure(state="normal")
-        logbox.delete("1.0", "end")
-        logbox.configure(state="disabled")
+        ui["running"] = True
+        ui["logtext"] = []
+        ui["btn"].configure(state="disabled")
+        lb = ui["logbox"]
+        lb.configure(state="normal")
+        lb.delete("1.0", "end")
+        lb.configure(state="disabled")
         threading.Thread(target=work, args=(opts,), daemon=True).start()
 
-    btn.configure(command=start)
+    build()
     poll()
     if os.environ.get("L2DSG_SMOKE"):  # automated smoke test: open + close
         root.after(1500, root.destroy)
