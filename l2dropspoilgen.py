@@ -970,6 +970,11 @@ def gui():
     root = tk.Tk()
     root.title("%s %s — Rekiem Games Network" % (APP, VERSION))
     root.minsize(660, 600)
+    try:
+        base = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
+        root.iconbitmap(os.path.join(base, "icon.ico"))
+    except Exception:
+        pass  # icon is cosmetic — never block the GUI over it
 
     q = _queue.Queue()
 

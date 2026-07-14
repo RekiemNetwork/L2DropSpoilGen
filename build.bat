@@ -3,6 +3,8 @@ rem Build L2DropSpoilGen.exe (onefile, console). Run from this folder.
 python -m PyInstaller --onefile --noconsole --clean --noconfirm ^
   --name L2DropSpoilGen ^
   --version-file version_info.txt ^
+  --icon icon.ico ^
+  --add-data "icon.ico;." ^
   --add-data "tools;tools" ^
   l2dropspoilgen.py
 echo.
