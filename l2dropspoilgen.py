@@ -855,8 +855,6 @@ def cli(argv):
 
 # ---------------------------------------------------------------- GUI
 
-WEBSITE = "https://rekiemgames.com"
-
 L10N = {
     "en": dict(
         subtitle="Drop/Spoil target icons — L2J Mobius datapacks · High Five clients",
@@ -965,7 +963,6 @@ def gui():
     import threading
     import queue as _queue
     import locale
-    import webbrowser
 
     root = tk.Tk()
     root.title("%s %s — Rekiem Games Network" % (APP, VERSION))
@@ -1140,10 +1137,8 @@ def gui():
         frm.rowconfigure(9, weight=1)
         frm.columnconfigure(1, weight=1)
 
-        footer = ttk.Label(frm, text=T["footer"], foreground="#777777",
-                           cursor="hand2", font=(None, 8))
-        footer.grid(row=10, column=0, columnspan=4, pady=(6, 0))
-        footer.bind("<Button-1>", lambda _e: webbrowser.open(WEBSITE))
+        ttk.Label(frm, text=T["footer"], foreground="#777777",
+                  font=(None, 8)).grid(row=10, column=0, columnspan=4, pady=(6, 0))
 
     def log(s):
         q.put(s)
