@@ -855,6 +855,25 @@ def cli(argv):
 
 # ---------------------------------------------------------------- GUI
 
+CFG_PATH = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")),
+                        "L2DropSpoilGen", "config.json")
+
+
+def load_cfg():
+    try:
+        return json.load(open(CFG_PATH, encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def save_cfg(d):
+    try:
+        os.makedirs(os.path.dirname(CFG_PATH), exist_ok=True)
+        json.dump(d, open(CFG_PATH, "w", encoding="utf-8"), indent=1)
+    except Exception:
+        pass  # settings persistence is best-effort
+
+
 L10N = {
     "en": dict(
         subtitle="Drop/Spoil target icons — L2J Mobius datapacks · High Five clients",
@@ -975,26 +994,41 @@ def gui():
 
     q = _queue.Queue()
 
-    # UI language: auto-detect, switchable at runtime
+    cfg = load_cfg()
+
+    # UI language: saved preference, else auto-detect; switchable at runtime
     loc = ""
     try:
         loc = (locale.getlocale()[0] or "").lower()
     except Exception:
         pass
-    cur = {"lang": "es" if loc.startswith(("es", "spanish")) else
-                   "pt" if loc.startswith(("pt", "portug")) else "en"}
+    auto = ("es" if loc.startswith(("es", "spanish")) else
+            "pt" if loc.startswith(("pt", "portug")) else "en")
+    cur = {"lang": cfg.get("lang") if cfg.get("lang") in L10N else auto}
 
-    # state that survives language switches
-    v_npcs = tk.StringVar()
-    v_sys = tk.StringVar()
-    v_out = tk.StringVar(value=os.path.abspath("output"))
-    v_rates = tk.StringVar()
-    opt_vars = {k: tk.StringVar(value=str(DEFAULTS[k])) for k in
+    # state that survives language switches (preloaded from the saved config)
+    v_npcs = tk.StringVar(value=cfg.get("npcs", ""))
+    v_sys = tk.StringVar(value=cfg.get("system", ""))
+    v_out = tk.StringVar(value=cfg.get("out") or os.path.abspath("output"))
+    v_rates = tk.StringVar(value=cfg.get("rates", ""))
+    saved_opts = cfg.get("opts", {})
+    opt_vars = {k: tk.StringVar(value=str(saved_opts.get(k, DEFAULTS[k]))) for k in
                 ("min_chance", "max_items", "max_line", "chance_decimals",
                  "title_drop", "title_spoil", "max_chars", "base_id",
                  "trunc_suffix", "header_char", "header_factor")}
-    lang_vars, lang_state = {}, {}
+    lang_vars, lang_state = {}, dict(cfg.get("sn", {}))
     ui = {"running": False, "logtext": []}
+
+    def on_close():
+        if not os.environ.get("L2DSG_SMOKE"):
+            for l, v in lang_vars.items():
+                lang_state[l] = v.get()
+            save_cfg(dict(lang=cur["lang"], npcs=v_npcs.get(), system=v_sys.get(),
+                          out=v_out.get(), rates=v_rates.get(),
+                          opts={k: v.get() for k, v in opt_vars.items()},
+                          sn=lang_state))
+        root.destroy()
+    root.protocol("WM_DELETE_WINDOW", on_close)
 
     class Tip:
         def __init__(self, widget, text):
@@ -1172,14 +1206,21 @@ def gui():
             raise ToolError("Invalid value for %s: %r" % (key, opt_vars[key].get()))
 
     def work(opts):
+        ok = False
         try:
             run_pipeline(opts, log)
+            ok = True
         except ToolError as e:
             log("\nERROR: %s" % e)
         except Exception:
             log("\nUNEXPECTED ERROR:\n" + traceback.format_exc())
         finally:
             q.put(StopIteration)
+        if ok:  # show the generated files to the user
+            try:
+                os.startfile(os.path.abspath(opts["out"]))
+            except Exception:
+                pass
 
     def start():
         T = L10N[cur["lang"]]

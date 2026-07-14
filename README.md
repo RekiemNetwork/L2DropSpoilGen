@@ -1,5 +1,7 @@
 # L2DropSpoilGen 1.3 — Drop/Spoil on-hover target icons (HighFive)
 
+**English** · [Español](README.es.md) · [Português](README.pt.md)
+
 Adds a **Drop** icon (adena coin) and a **Spoil** icon to every monster's target
 window. Hovering an icon shows that monster's **full drop / spoil list** with
 amounts and chances, taken directly from your server's datapack.
@@ -35,6 +37,9 @@ top-right) and every field has a **"?" hover tooltip** explaining what it does:
 3. **Output folder** — where the 3 patched `.dat` are written.
 4. Press **Generate**, then **back up** the originals in `System` and copy the
    generated files over them. Done — enter the game and target any monster.
+
+The GUI remembers your folders and options between runs, and opens the output
+folder when generation finishes.
 
 ### CLI
 
