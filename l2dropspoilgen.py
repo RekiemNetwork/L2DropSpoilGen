@@ -860,7 +860,7 @@ WEBSITE = "https://rekiemgames.com"
 L10N = {
     "en": dict(
         subtitle="Drop/Spoil target icons — L2J Mobius datapacks · High Five clients",
-        footer="Created by Rekiem Games Network · rekiemgames.com — free community tool",
+        footer="Created by Rekiem Games Network — free community tool",
         npcs="Datapack NPCs folder", sys="Client System folder", out="Output folder",
         rates="Server Rates.ini (optional)", sn="SkillName languages",
         fmt="Format options", adv="Advanced (defaults are fine)", generate="Generate",
@@ -892,7 +892,7 @@ L10N = {
     ),
     "es": dict(
         subtitle="Iconos de Drop/Spoil en el target — datapacks L2J Mobius · clientes High Five",
-        footer="Creado por Rekiem Games Network · rekiemgames.com — herramienta gratuita para la comunidad",
+        footer="Creado por Rekiem Games Network — herramienta gratuita para la comunidad",
         npcs="Carpeta NPCs del datapack", sys="Carpeta System del cliente", out="Carpeta de salida",
         rates="Rates.ini del servidor (opcional)", sn="Idiomas SkillName",
         fmt="Opciones de formato", adv="Avanzado (los valores por defecto van bien)", generate="Generar",
@@ -924,7 +924,7 @@ L10N = {
     ),
     "pt": dict(
         subtitle="Ícones de Drop/Spoil no alvo — datapacks L2J Mobius · clientes High Five",
-        footer="Criado por Rekiem Games Network · rekiemgames.com — ferramenta gratuita para a comunidade",
+        footer="Criado por Rekiem Games Network — ferramenta gratuita para a comunidade",
         npcs="Pasta NPCs do datapack", sys="Pasta System do cliente", out="Pasta de saída",
         rates="Rates.ini do servidor (opcional)", sn="Idiomas SkillName",
         fmt="Opções de formato", adv="Avançado (os padrões funcionam bem)", generate="Gerar",
