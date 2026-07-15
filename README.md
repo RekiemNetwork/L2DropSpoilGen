@@ -2,6 +2,8 @@
 
 **English** · [Español](README.es.md) · [Português](README.pt.md)
 
+**[⬇ Download the latest release](https://github.com/RekiemNetwork/L2DropSpoilGen/releases/latest)** · [VirusTotal 3/70](https://www.virustotal.com/gui/file/f81e29d7416db82dd7e4adbcf574e77615f929b7de4b39e8d6a9f03b88f75166) (PyInstaller generic false positive — full source included)
+
 Adds a **Drop** icon (adena coin) and a **Spoil** icon to every monster's target
 window. Hovering an icon shows that monster's **full drop / spoil list** with
 amounts and chances, taken directly from your server's datapack.
