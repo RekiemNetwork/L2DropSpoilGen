@@ -94,5 +94,5 @@ format options freely.
 - Bundled `.dat` toolchain: **l2encdec** and **l2asm/l2disasm** by
   **M.Soltys (DStuff)**, ddf definitions by the community (czardadius et al.).
 - `npcgrp.dat` structure reference: **L2ClientDat** editor.
-- Tool by **Altur — Rekiem Games Network** (rekiemgames.com). Free for the
+- Tool by **Rekiem Games Network** (rekiemgames.com). Free for the
   community; do not sell.

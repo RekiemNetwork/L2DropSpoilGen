@@ -96,5 +96,5 @@ iterar las opciones de formato libremente.
 - Toolchain `.dat` incluido: **l2encdec** y **l2asm/l2disasm** de
   **M.Soltys (DStuff)**, definiciones ddf de la comunidad (czardadius y otros).
 - Referencia de la estructura de `npcgrp.dat`: editor **L2ClientDat**.
-- Herramienta de **Altur — Rekiem Games Network** (rekiemgames.com). Gratis
+- Herramienta de **Rekiem Games Network** (rekiemgames.com). Gratis
   para la comunidad; no vender.
