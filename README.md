@@ -2,7 +2,7 @@
 
 **English** · [Español](README.es.md) · [Português](README.pt.md)
 
-**[⬇ Download the latest release](https://github.com/RekiemNetwork/L2DropSpoilGen/releases/latest)** · [VirusTotal 3/70](https://www.virustotal.com/gui/file/f81e29d7416db82dd7e4adbcf574e77615f929b7de4b39e8d6a9f03b88f75166) (PyInstaller generic false positive — full source included)
+**[⬇ Download the latest release](https://github.com/RekiemNetwork/L2DropSpoilGen/releases/latest)** · [VirusTotal 2/70](https://www.virustotal.com/gui/file/0101a4c086adad9bdb87ae7239ab833895f7f5253f8278c8927e3d4b0a4a6d86) (PyInstaller generic false positive — full source included)
 
 Adds a **Drop** icon (adena coin) and a **Spoil** icon to every monster's target
 window. Hovering an icon shows that monster's **full drop / spoil list** with
