@@ -1,4 +1,4 @@
-# L2DropSpoilGen 1.3 — Ícones de Drop/Spoil ao passar o mouse (HighFive)
+# L2DropSpoilGen 1.4 — Ícones de Drop/Spoil ao passar o mouse (HighFive)
 
 [English](README.md) · [Español](README.es.md) · **Português**
 
@@ -52,6 +52,7 @@ L2DropSpoilGen.exe --npcs <datapack>\data\stats\npcs --system <cliente>\System -
 |---|---|---|
 | `--lang pt,e` | todos os encontrados | quais `SkillName-<idioma>.dat` corrigir |
 | `--rates-ini <caminho>` | off | o `Rates.ini` do seu servidor — as chances/quantidades mostradas aplicam os **mesmos multiplicadores do servidor** (listas per-item, cascata herb/raid/normal, rates de spoil; itens com chance 0 são escondidos) |
+| `--hide-herbs` | off | remove as herbs das listas de drop (mob que dropa herbs dropa todas) |
 | `--min-chance 0.01` | 0 (off) | esconder itens abaixo desta chance % |
 | `--max-items 30` | 0 (off) | máximo de itens por lista (adiciona `+N more...`) |
 | `--max-line 70` | 0 (off) | largura máxima da linha (nomes longos são encurtados) |

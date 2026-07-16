@@ -1,4 +1,4 @@
-# L2DropSpoilGen 1.3 — Drop/Spoil on-hover target icons (HighFive)
+# L2DropSpoilGen 1.4 — Drop/Spoil on-hover target icons (HighFive)
 
 **English** · [Español](README.es.md) · [Português](README.pt.md)
 
@@ -53,6 +53,7 @@ L2DropSpoilGen.exe --npcs <datapack>\data\stats\npcs --system <client>\System --
 |---|---|---|
 | `--lang es,e` | all found | which `SkillName-<lang>.dat` to patch |
 | `--rates-ini <path>` | off | your server's `Rates.ini` — shown chances/amounts get the **same multipliers the server applies** (per-item-id lists, herb/raid/normal cascade, spoil rates; chance-0 items are hidden) |
+| `--hide-herbs` | off | remove herbs from drop lists (mobs that drop herbs drop them all) |
 | `--min-chance 0.01` | 0 (off) | hide items below this chance % |
 | `--max-items 30` | 0 (off) | cap items per list (adds `+N more...`) |
 | `--max-line 70` | 0 (off) | cap line width (long item names are shortened) |

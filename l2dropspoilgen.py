@@ -32,7 +32,7 @@ import subprocess
 import argparse
 
 APP = "L2DropSpoilGen"
-VERSION = "1.3"
+VERSION = "1.4"
 
 # Skill ids >= STRIP_FLOOR that use our icons are treated as leftovers from a
 # previous run of this tool and are removed before regenerating (idempotent
@@ -41,6 +41,7 @@ STRIP_FLOOR = 27000
 
 DEFAULTS = dict(
     base_id=30001,
+    hide_herbs=False,    # drop herbs from the lists (mobs that drop herbs drop them all)
     max_chars=1500,
     max_line=0,          # 0 = unlimited; else truncate long item names
     max_items=0,         # 0 = unlimited; else cap items per list
@@ -454,6 +455,8 @@ def generate(drops, sg_rows, o, log, rates=None, herbs=frozenset()):
         for kind, icon, title in (("drop", o["drop_icon"], o["title_drop"]),
                                   ("spoil", o["spoil_icon"], o["title_spoil"])):
             items = drops[npc][kind]
+            if o["hide_herbs"] and herbs:
+                items = [it for it in items if it[4] not in herbs]
             if rates is not None and rates.active:
                 items = apply_rates(items, kind, drops[npc].get("raid", False),
                                     rates, herbs)
@@ -733,12 +736,16 @@ def run_pipeline(opts, log):
         # 2) extract drop/spoil from the datapack
         drops = extract_npcs(npcs_dir, log)
 
-        # 2b) optional server rates
+        # 2b) optional server rates + herb detection
         rates, herbs = None, frozenset()
         if o.get("rates_ini"):
             rates = parse_rates_ini(o["rates_ini"], log)
-            if rates.active:
-                herbs = load_herb_ids(npcs_dir, log)
+        if (rates is not None and rates.active) or o["hide_herbs"]:
+            herbs = load_herb_ids(npcs_dir, log)
+            if o["hide_herbs"]:
+                log("Hiding herbs from drop lists (%d herb item ids)" % len(herbs)
+                    if herbs else
+                    "WARNING: hide-herbs requested but no herbs detected in the datapack")
 
         # 3) generate skills (cleaning any previous run first)
         sg_rows = load_rows(os.path.join(workdir, "sg.txt"))
@@ -811,6 +818,8 @@ def build_parser():
     p.add_argument("--rates-ini", help="server Rates.ini — shown chances/amounts "
                                        "get the same multipliers the server applies")
     g = p.add_argument_group("format options")
+    g.add_argument("--hide-herbs", action="store_true",
+                   help="remove herbs from drop lists (mobs that drop herbs drop them all)")
     g.add_argument("--base-id", type=int, help="first custom skill id (default 30001)")
     g.add_argument("--max-chars", type=int, help="max tooltip length in chars (default 1500)")
     g.add_argument("--max-line", type=int, help="max item line width, 0=off (default 0)")
@@ -837,6 +846,7 @@ def cli(argv):
     opts = dict(
         npcs=args.npcs, system=args.system, out=args.out, rates_ini=args.rates_ini,
         langs=[l.strip().lower() for l in args.lang.split(",")] if args.lang else None,
+        hide_herbs=args.hide_herbs,
         base_id=args.base_id, max_chars=args.max_chars, max_line=args.max_line,
         max_items=args.max_items, min_chance=args.min_chance,
         chance_decimals=args.chance_decimals, title_drop=args.title_drop,
@@ -886,6 +896,7 @@ L10N = {
         err_langs="Select at least one SkillName language",
         min_chance="Min chance %", max_items="Max items (0=all)",
         max_line="Max line width (0=off)", chance_decimals="Chance decimals",
+        hide_herbs="Hide herbs",
         title_drop="Drop title", title_spoil="Spoil title",
         max_chars="Max tooltip chars", base_id="Base skill id",
         trunc_suffix="Truncation text", header_char="Header pad char",
@@ -895,6 +906,7 @@ L10N = {
         h_out="Where the 3 patched .dat files are written. Nothing is written into the client directly — back up your originals and copy these over them.",
         h_rates="Optional: your server's Rates.ini. Shown chances/amounts then include the same multipliers the server applies (per-item ids, herb, raid, spoil). Leave empty to show raw datapack values.",
         h_sn="Which SkillName-<lang>.dat files to patch — pick the language(s) your client uses.",
+        h_hide_herbs="Remove herbs (Herb of Life, of Mana...) from the drop lists. Mobs that drop herbs drop them all, so listing them just adds noise.",
         h_min_chance="Hide items whose final chance is below this % (0 = show everything).",
         h_max_items="Show at most this many items per list; the rest becomes '+N more...' (0 = no limit).",
         h_max_line="Maximum line width; longer item names are shortened with '...' (0 = no limit).",
@@ -918,6 +930,7 @@ L10N = {
         err_langs="Selecciona al menos un idioma de SkillName",
         min_chance="Chance mínima %", max_items="Máx. items (0=todos)",
         max_line="Ancho máx. línea (0=off)", chance_decimals="Decimales del %",
+        hide_herbs="Ocultar herbs",
         title_drop="Título Drop", title_spoil="Título Spoil",
         max_chars="Máx. caracteres tooltip", base_id="Id base de skill",
         trunc_suffix="Texto de recorte", header_char="Carácter de cabecera",
@@ -927,6 +940,7 @@ L10N = {
         h_out="Dónde se escriben los 3 .dat generados. No se escribe nada en el cliente directamente — haz backup de los originales y cópialos tú encima.",
         h_rates="Opcional: el Rates.ini de tu servidor. Los números mostrados incluirán los mismos multiplicadores que aplica el servidor (per-item, herbs, raid, spoil). Vacío = valores del datapack tal cual.",
         h_sn="Qué SkillName-<idioma>.dat parchear — marca el idioma que usa tu cliente.",
+        h_hide_herbs="Quita las herbs (Herb of Life, de maná...) de las listas de drop. Los mobs que sueltan herbs las sueltan todas — listarlas solo mete ruido.",
         h_min_chance="Oculta items cuyo chance final sea menor que este % (0 = mostrar todo).",
         h_max_items="Muestra como máximo estos items por lista; el resto sale como '+N more...' (0 = sin límite).",
         h_max_line="Ancho máximo de línea; los nombres largos se acortan con '...' (0 = sin límite).",
@@ -950,6 +964,7 @@ L10N = {
         err_langs="Selecione pelo menos um idioma de SkillName",
         min_chance="Chance mínima %", max_items="Máx. itens (0=todos)",
         max_line="Largura máx. linha (0=off)", chance_decimals="Decimais do %",
+        hide_herbs="Esconder herbs",
         title_drop="Título Drop", title_spoil="Título Spoil",
         max_chars="Máx. caracteres tooltip", base_id="Id base da skill",
         trunc_suffix="Texto de corte", header_char="Caractere do cabeçalho",
@@ -959,6 +974,7 @@ L10N = {
         h_out="Onde os 3 .dat gerados são escritos. Nada é escrito direto no cliente — faça backup dos originais e copie por cima você mesmo.",
         h_rates="Opcional: o Rates.ini do seu servidor. Os números mostrados incluirão os mesmos multiplicadores que o servidor aplica (per-item, herbs, raid, spoil). Vazio = valores do datapack.",
         h_sn="Quais SkillName-<idioma>.dat corrigir — marque o idioma que o seu cliente usa.",
+        h_hide_herbs="Remove as herbs (Herb of Life, de mana...) das listas de drop. Mobs que dropam herbs dropam todas — listá-las só polui a lista.",
         h_min_chance="Esconde itens com chance final abaixo deste % (0 = mostrar tudo).",
         h_max_items="Mostra no máximo esta quantidade de itens por lista; o resto vira '+N more...' (0 = sem limite).",
         h_max_line="Largura máxima da linha; nomes longos são encurtados com '...' (0 = sem limite).",
@@ -1016,6 +1032,7 @@ def gui():
                 ("min_chance", "max_items", "max_line", "chance_decimals",
                  "title_drop", "title_spoil", "max_chars", "base_id",
                  "trunc_suffix", "header_char", "header_factor")}
+    v_hideherbs = tk.BooleanVar(value=bool(cfg.get("hide_herbs", False)))
     lang_vars, lang_state = {}, dict(cfg.get("sn", {}))
     ui = {"running": False, "logtext": []}
 
@@ -1025,6 +1042,7 @@ def gui():
                 lang_state[l] = v.get()
             save_cfg(dict(lang=cur["lang"], npcs=v_npcs.get(), system=v_sys.get(),
                           out=v_out.get(), rates=v_rates.get(),
+                          hide_herbs=v_hideherbs.get(),
                           opts={k: v.get() for k, v in opt_vars.items()},
                           sn=lang_state))
         root.destroy()
@@ -1147,6 +1165,10 @@ def gui():
         opt(optf, (1, 0), "chance_decimals")
         opt(optf, (1, 1), "title_drop", 12)
         opt(optf, (1, 2), "title_spoil", 12)
+        ttk.Checkbutton(optf, text=T["hide_herbs"], variable=v_hideherbs).grid(
+            row=2, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        help_mark(optf, T["h_hide_herbs"]).grid(row=2, column=2, sticky="w",
+                                                padx=(2, 12), pady=(4, 0))
         opt(advf, (0, 0), "max_chars")
         opt(advf, (0, 1), "base_id")
         opt(advf, (0, 2), "trunc_suffix", 12)
@@ -1233,6 +1255,7 @@ def gui():
             opts = dict(
                 npcs=v_npcs.get(), system=v_sys.get(), out=v_out.get(), langs=langs,
                 rates_ini=v_rates.get().strip() or None,
+                hide_herbs=v_hideherbs.get(),
                 base_id=num("base_id", int), max_chars=num("max_chars", int),
                 max_line=num("max_line", int), max_items=num("max_items", int),
                 min_chance=num("min_chance", float),
