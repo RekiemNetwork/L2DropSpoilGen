@@ -1,4 +1,4 @@
-# L2DropSpoilGen 1.4 — Iconos de Drop/Spoil al pasar el ratón (HighFive)
+# L2DropSpoilGen 1.5 — Iconos de Drop/Spoil al pasar el ratón (HighFive)
 
 [English](README.md) · **Español** · [Português](README.pt.md)
 
@@ -53,6 +53,7 @@ L2DropSpoilGen.exe --npcs <datapack>\data\stats\npcs --system <cliente>\System -
 | `--lang es,e` | todos los encontrados | qué `SkillName-<idioma>.dat` parchear |
 | `--rates-ini <ruta>` | off | el `Rates.ini` de tu servidor — los chances/cantidades mostrados aplican los **mismos multiplicadores que el servidor** (listas per-item, cascada herb/raid/normal, rates de spoil; los items con chance 0 se ocultan) |
 | `--hide-herbs` | off | quita las herbs de las listas de drop (el mob que suelta herbs las suelta todas) |
+| `--min-rows 3` | 3 | filas mín. de los tooltips CORTOS para que salgan bajo los iconos del target. 0=off, 3=1 regla de cierre (defecto), 4=2 reglas (margen UIs compactas). GUI: "Relleno tooltip corto" 0/1/2 |
 | `--min-chance 0.01` | 0 (off) | ocultar items por debajo de este % de chance |
 | `--max-items 30` | 0 (off) | máximo de items por lista (añade `+N more...`) |
 | `--max-line 70` | 0 (off) | ancho máximo de línea (los nombres largos se acortan) |
@@ -69,6 +70,8 @@ elimina primero la generación anterior (mismos ids/iconos), así que puedes
 iterar las opciones de formato libremente.
 
 ## Notas
+
+- **Tooltips cortos**: los mobs de 1-3 items mostrarían su tooltip ENCIMA de los iconos del target y se recortarían tras el nombre del mob. La herramienta los rellena con una regla de cierre para que salgan DEBAJO (GUI "Relleno tooltip corto" / `--min-rows`). Funciona con la ventana de target en su **posición por defecto**; si el jugador la arrastra al centro, el tooltip corto puede recortarse otra vez — limitación del motor, no arreglable desde los .dat. Una interfaz custom con fuente muy compacta puede necesitar relleno 2 / `--min-rows 4`.
 
 - **Rates del servidor** (`--rates-ini` o el campo "Rates.ini del servidor" de
   la GUI): la herramienta clona la cascada exacta de rates de drop de L2J

@@ -32,7 +32,7 @@ import subprocess
 import argparse
 
 APP = "L2DropSpoilGen"
-VERSION = "1.4"
+VERSION = "1.5"
 
 # Skill ids >= STRIP_FLOOR that use our icons are treated as leftovers from a
 # previous run of this tool and are removed before regenerating (idempotent
@@ -53,6 +53,11 @@ DEFAULTS = dict(
     title_spoil="Spoil",
     header_char="=",
     header_factor=1.0,   # scale of the header width vs the widest item line
+    min_pad_rows=3,      # short tooltips are padded up to this many rows (with rule lines) so
+                         # the HF client flips them BELOW the icons instead of clipping them
+                         # above. GUI exposes this as "short-tooltip filler" 0/1/2 closing rules
+                         # (0->0, 1->3, 2->4). 3 (=1 rule) flips on the default target window,
+                         # verified in-game; 4 gives extra margin for compact custom interfaces.
     trunc_suffix="...(more)",
     template_skill="4460",
 )
@@ -377,7 +382,22 @@ def make_body(lines, title, o):
     t = " %s " % title
     pad = max(int(round(target - disp_width(t))), 4)
     header = o["header_char"] * (pad // 2) + t + o["header_char"] * (pad - pad // 2)
-    body = header + "\\n" + "\\n".join(lines)
+    rows = [header] + lines
+    # The HF client anchors the target tooltip ABOVE the cursor and only flips it
+    # BELOW the icons when it is tall enough not to fit above. Short tooltips stay
+    # up and cover the mob name/HP. Pad short tooltips up to min_pad_rows so they
+    # grow tall enough to flip down. The padding rows are a rule of header_char
+    # (same width as the header) instead of blank rows: same height -> same flip,
+    # but reads as a closed box rather than an empty black band, and the visible
+    # glyphs are immune to clients that might collapse whitespace-only rows.
+    # min_pad_rows=0 disables padding.
+    if o["min_pad_rows"] and len(rows) < o["min_pad_rows"]:
+        # match the header's RENDERED width, not its char count: " Drop " is
+        # narrower than the header_char glyphs it replaces, so a same-char-count
+        # rule would overshoot. Size the rule by visual width instead.
+        rule = o["header_char"] * max(int(disp_width(header) / disp_width(o["header_char"])), 1)
+        rows = rows + [rule] * (o["min_pad_rows"] - len(rows))
+    body = "\\n".join(rows)
     if len(body) > o["max_chars"]:
         body = body[:o["max_chars"]].rsplit("\\n", 1)[0] + "\\n" + o["trunc_suffix"]
     return body
@@ -831,6 +851,10 @@ def build_parser():
     g.add_argument("--header-char", help='header padding char (default "=")')
     g.add_argument("--header-factor", type=float,
                    help="header width vs widest line, 1.0=equal (default 1.0)")
+    g.add_argument("--min-rows", type=int,
+                   help="pad short tooltips with blank rows up to N total so the "
+                        "client renders them below the icons, not over the mob name "
+                        "(0=off, default 3)")
     g.add_argument("--trunc-suffix", help='text appended when capped (default "...(more)")')
     g.add_argument("--drop-icon", help="default icon.etc_adena_i00")
     g.add_argument("--spoil-icon", help="default icon.skill0254")
@@ -851,7 +875,7 @@ def cli(argv):
         max_items=args.max_items, min_chance=args.min_chance,
         chance_decimals=args.chance_decimals, title_drop=args.title_drop,
         title_spoil=args.title_spoil, header_char=args.header_char,
-        header_factor=args.header_factor,
+        header_factor=args.header_factor, min_pad_rows=args.min_rows,
         trunc_suffix=args.trunc_suffix, drop_icon=args.drop_icon,
         spoil_icon=args.spoil_icon, dump_json=args.dump_json or None,
         keep_temp=args.keep_temp or None,
@@ -896,7 +920,7 @@ L10N = {
         err_langs="Select at least one SkillName language",
         min_chance="Min chance %", max_items="Max items (0=all)",
         max_line="Max line width (0=off)", chance_decimals="Chance decimals",
-        hide_herbs="Hide herbs",
+        hide_herbs="Hide herbs", pad_lines="Short-tooltip filler",
         title_drop="Drop title", title_spoil="Spoil title",
         max_chars="Max tooltip chars", base_id="Base skill id",
         trunc_suffix="Truncation text", header_char="Header pad char",
@@ -907,6 +931,7 @@ L10N = {
         h_rates="Optional: your server's Rates.ini. Shown chances/amounts then include the same multipliers the server applies (per-item ids, herb, raid, spoil). Leave empty to show raw datapack values.",
         h_sn="Which SkillName-<lang>.dat files to patch — pick the language(s) your client uses.",
         h_hide_herbs="Remove herbs (Herb of Life, of Mana...) from the drop lists. Mobs that drop herbs drop them all, so listing them just adds noise.",
+        h_pad_lines="Closing rule lines added to SHORT tooltips (1-3 items) so they render BELOW the target icons instead of clipping above the mob name. 1 works on the default target window (recommended); 2 gives margin for compact custom interfaces; 0 disables it (short tooltips will clip up). Long lists are never padded.",
         h_min_chance="Hide items whose final chance is below this % (0 = show everything).",
         h_max_items="Show at most this many items per list; the rest becomes '+N more...' (0 = no limit).",
         h_max_line="Maximum line width; longer item names are shortened with '...' (0 = no limit).",
@@ -930,7 +955,7 @@ L10N = {
         err_langs="Selecciona al menos un idioma de SkillName",
         min_chance="Chance mínima %", max_items="Máx. items (0=todos)",
         max_line="Ancho máx. línea (0=off)", chance_decimals="Decimales del %",
-        hide_herbs="Ocultar herbs",
+        hide_herbs="Ocultar herbs", pad_lines="Relleno tooltip corto",
         title_drop="Título Drop", title_spoil="Título Spoil",
         max_chars="Máx. caracteres tooltip", base_id="Id base de skill",
         trunc_suffix="Texto de recorte", header_char="Carácter de cabecera",
@@ -941,6 +966,7 @@ L10N = {
         h_rates="Opcional: el Rates.ini de tu servidor. Los números mostrados incluirán los mismos multiplicadores que aplica el servidor (per-item, herbs, raid, spoil). Vacío = valores del datapack tal cual.",
         h_sn="Qué SkillName-<idioma>.dat parchear — marca el idioma que usa tu cliente.",
         h_hide_herbs="Quita las herbs (Herb of Life, de maná...) de las listas de drop. Los mobs que sueltan herbs las sueltan todas — listarlas solo mete ruido.",
+        h_pad_lines="Líneas de cierre '====' que se añaden a los tooltips CORTOS (1-3 items) para que salgan DEBAJO de los iconos del target en vez de recortarse sobre el nombre del mob. 1 funciona con la ventana de target por defecto (recomendado); 2 da margen para interfaces custom compactas; 0 lo desactiva (los cortos se recortan arriba). Las listas largas nunca se rellenan.",
         h_min_chance="Oculta items cuyo chance final sea menor que este % (0 = mostrar todo).",
         h_max_items="Muestra como máximo estos items por lista; el resto sale como '+N more...' (0 = sin límite).",
         h_max_line="Ancho máximo de línea; los nombres largos se acortan con '...' (0 = sin límite).",
@@ -964,7 +990,7 @@ L10N = {
         err_langs="Selecione pelo menos um idioma de SkillName",
         min_chance="Chance mínima %", max_items="Máx. itens (0=todos)",
         max_line="Largura máx. linha (0=off)", chance_decimals="Decimais do %",
-        hide_herbs="Esconder herbs",
+        hide_herbs="Esconder herbs", pad_lines="Preenchimento tooltip curto",
         title_drop="Título Drop", title_spoil="Título Spoil",
         max_chars="Máx. caracteres tooltip", base_id="Id base da skill",
         trunc_suffix="Texto de corte", header_char="Caractere do cabeçalho",
@@ -975,6 +1001,7 @@ L10N = {
         h_rates="Opcional: o Rates.ini do seu servidor. Os números mostrados incluirão os mesmos multiplicadores que o servidor aplica (per-item, herbs, raid, spoil). Vazio = valores do datapack.",
         h_sn="Quais SkillName-<idioma>.dat corrigir — marque o idioma que o seu cliente usa.",
         h_hide_herbs="Remove as herbs (Herb of Life, de mana...) das listas de drop. Mobs que dropam herbs dropam todas — listá-las só polui a lista.",
+        h_pad_lines="Linhas de fecho '====' adicionadas aos tooltips CURTOS (1-3 itens) para saírem ABAIXO dos ícones do alvo em vez de cortarem sobre o nome do mob. 1 funciona na janela de alvo padrão (recomendado); 2 dá margem para interfaces custom compactas; 0 desativa (os curtos cortam para cima). Listas longas nunca são preenchidas.",
         h_min_chance="Esconde itens com chance final abaixo deste % (0 = mostrar tudo).",
         h_max_items="Mostra no máximo esta quantidade de itens por lista; o resto vira '+N more...' (0 = sem limite).",
         h_max_line="Largura máxima da linha; nomes longos são encurtados com '...' (0 = sem limite).",
@@ -1033,6 +1060,9 @@ def gui():
                  "title_drop", "title_spoil", "max_chars", "base_id",
                  "trunc_suffix", "header_char", "header_factor")}
     v_hideherbs = tk.BooleanVar(value=bool(cfg.get("hide_herbs", False)))
+    # short-tooltip filler: "0"/"1"/"2" closing rule lines -> min_pad_rows 0/3/4
+    PAD_MAP = {"0": 0, "1": 3, "2": 4}
+    v_padlines = tk.StringVar(value=cfg.get("pad_lines", "1"))
     lang_vars, lang_state = {}, dict(cfg.get("sn", {}))
     ui = {"running": False, "logtext": []}
 
@@ -1042,7 +1072,7 @@ def gui():
                 lang_state[l] = v.get()
             save_cfg(dict(lang=cur["lang"], npcs=v_npcs.get(), system=v_sys.get(),
                           out=v_out.get(), rates=v_rates.get(),
-                          hide_herbs=v_hideherbs.get(),
+                          hide_herbs=v_hideherbs.get(), pad_lines=v_padlines.get(),
                           opts={k: v.get() for k, v in opt_vars.items()},
                           sn=lang_state))
         root.destroy()
@@ -1169,6 +1199,12 @@ def gui():
             row=2, column=0, columnspan=2, sticky="w", pady=(4, 0))
         help_mark(optf, T["h_hide_herbs"]).grid(row=2, column=2, sticky="w",
                                                 padx=(2, 12), pady=(4, 0))
+        ttk.Label(optf, text=T["pad_lines"]).grid(row=2, column=3, sticky="w",
+                                                  padx=(0, 3), pady=(4, 0))
+        ttk.Combobox(optf, textvariable=v_padlines, values=["0", "1", "2"],
+                     width=4, state="readonly").grid(row=2, column=4, sticky="w", pady=(4, 0))
+        help_mark(optf, T["h_pad_lines"]).grid(row=2, column=5, sticky="w",
+                                               padx=(2, 12), pady=(4, 0))
         opt(advf, (0, 0), "max_chars")
         opt(advf, (0, 1), "base_id")
         opt(advf, (0, 2), "trunc_suffix", 12)
@@ -1265,6 +1301,7 @@ def gui():
                 trunc_suffix=opt_vars["trunc_suffix"].get(),
                 header_char=opt_vars["header_char"].get() or "=",
                 header_factor=num("header_factor", float),
+                min_pad_rows=PAD_MAP.get(v_padlines.get(), 3),
             )
         except ToolError as e:
             messagebox.showerror(APP, str(e))

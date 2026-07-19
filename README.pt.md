@@ -1,4 +1,4 @@
-# L2DropSpoilGen 1.4 — Ícones de Drop/Spoil ao passar o mouse (HighFive)
+# L2DropSpoilGen 1.5 — Ícones de Drop/Spoil ao passar o mouse (HighFive)
 
 [English](README.md) · [Español](README.es.md) · **Português**
 
@@ -53,6 +53,7 @@ L2DropSpoilGen.exe --npcs <datapack>\data\stats\npcs --system <cliente>\System -
 | `--lang pt,e` | todos os encontrados | quais `SkillName-<idioma>.dat` corrigir |
 | `--rates-ini <caminho>` | off | o `Rates.ini` do seu servidor — as chances/quantidades mostradas aplicam os **mesmos multiplicadores do servidor** (listas per-item, cascata herb/raid/normal, rates de spoil; itens com chance 0 são escondidos) |
 | `--hide-herbs` | off | remove as herbs das listas de drop (mob que dropa herbs dropa todas) |
+| `--min-rows 3` | 3 | linhas mín. dos tooltips CURTOS para saírem abaixo dos ícones do alvo. 0=off, 3=1 regra de fecho (padrão), 4=2 regras (margem UIs compactas). GUI: "Preenchimento tooltip curto" 0/1/2 |
 | `--min-chance 0.01` | 0 (off) | esconder itens abaixo desta chance % |
 | `--max-items 30` | 0 (off) | máximo de itens por lista (adiciona `+N more...`) |
 | `--max-line 70` | 0 (off) | largura máxima da linha (nomes longos são encurtados) |
@@ -69,6 +70,8 @@ remove a geração anterior primeiro (mesmos ids/ícones), então você pode ite
 as opções de formato à vontade.
 
 ## Notas
+
+- **Tooltips curtos**: mobs com 1-3 itens mostrariam o tooltip ACIMA dos ícones do alvo e cortariam atrás do nome do mob. A ferramenta os preenche com uma regra de fecho para saírem ABAIXO (GUI "Preenchimento tooltip curto" / `--min-rows`). Funciona com a janela de alvo na sua **posição padrão**; se o jogador a arrastar para o centro, o tooltip curto pode cortar de novo — limitação do engine, não corrigível pelos .dat. Uma interface custom com fonte muito compacta pode precisar de preenchimento 2 / `--min-rows 4`.
 
 - **Rates do servidor** (`--rates-ini` ou o campo "Rates.ini do servidor" na
   GUI): a ferramenta clona a cascata exata de rates de drop do L2J Mobius

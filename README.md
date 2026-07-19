@@ -1,4 +1,4 @@
-# L2DropSpoilGen 1.4 — Drop/Spoil on-hover target icons (HighFive)
+# L2DropSpoilGen 1.5 — Drop/Spoil on-hover target icons (HighFive)
 
 **English** · [Español](README.es.md) · [Português](README.pt.md)
 
@@ -54,6 +54,7 @@ L2DropSpoilGen.exe --npcs <datapack>\data\stats\npcs --system <client>\System --
 | `--lang es,e` | all found | which `SkillName-<lang>.dat` to patch |
 | `--rates-ini <path>` | off | your server's `Rates.ini` — shown chances/amounts get the **same multipliers the server applies** (per-item-id lists, herb/raid/normal cascade, spoil rates; chance-0 items are hidden) |
 | `--hide-herbs` | off | remove herbs from drop lists (mobs that drop herbs drop them all) |
+| `--min-rows 3` | 3 | min rows for SHORT tooltips so they flip below the target icons. 0=off, 3=1 closing rule (default), 4=2 rules (margin for compact UIs). GUI: "Short-tooltip filler" 0/1/2 |
 | `--min-chance 0.01` | 0 (off) | hide items below this chance % |
 | `--max-items 30` | 0 (off) | cap items per list (adds `+N more...`) |
 | `--max-line 70` | 0 (off) | cap line width (long item names are shortened) |
@@ -70,6 +71,8 @@ the previous generation first (same ids/icons), so you can iterate on the
 format options freely.
 
 ## Notes
+
+- **Short tooltips**: mobs with 1-3 items would render their tooltip ABOVE the target icons and clip behind the mob name. The tool pads them with a closing rule so they flip below the icons (GUI "Short-tooltip filler" / `--min-rows`). This works with the target window in its **default position**; if a player drags it to mid-screen the short tooltip may clip again — an engine limitation, not fixable from the .dat. A very compact custom interface font may need filler 2 / `--min-rows 4`.
 
 - **Server rates** (`--rates-ini`, or the "Server Rates.ini" field in the GUI):
   the tool clones L2J Mobius' exact drop-rate cascade from
